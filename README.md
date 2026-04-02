@@ -35,8 +35,6 @@ Inspired by [Cloudflare's Code Mode pattern](https://github.com/cloudflare/agent
 <td align="center"><b>Codex</b></td>
 <td align="center"><img src="https://cdn.simpleicons.org/amp/181818" width="24" height="24" alt="Amp"><br><b>Amp</b></td>
 <td align="center"><b>OpenCode</b></td>
-<td align="center"><b>Pi</b></td>
-<td align="center"><b>Mono</b></td>
 </tr>
 </table>
 
@@ -130,7 +128,7 @@ args = ["mcpx-tools", "stdio", "mcpx.json"]
 </details>
 
 <details>
-<summary><b>Amp / OpenCode / Pi / Mono</b></summary>
+<summary><b>Amp / OpenCode</b></summary>
 
 Any agent that supports stdio MCP:
 
