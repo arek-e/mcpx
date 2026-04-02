@@ -50,42 +50,40 @@ export async function executeCode(
   });
 
   try {
-    // The V8 isolate can't call out to the host mid-execution.
-    // Strategy: the code accumulates tool call requests, returns them,
-    // then we execute the calls on the host and return results.
+    // V8 isolate can't call out to the host mid-execution.
+    // Strategy: code accumulates tool calls synchronously, returns them,
+    // then we execute calls on the host and return results.
     const toolNames = Object.keys(toolFunctions);
 
     const wrappedCode = `
-      const __calls = [];
-      ${toolNames.map((n) => `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args }); return { __pending: i }; };`).join('\n')}
+const __calls = [];
+${toolNames.map((n) => `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args: args || {} }); return { __pending: i }; };`).join('\n')}
 
-      const __userResult = await (async () => { ${code} })();
-      JSON.stringify({ result: __userResult, calls: __calls });
-    `;
+const __userResult = await (async () => { ${code} })();
+export default { result: __userResult, calls: __calls };
+`;
 
-    const runResult = await runtime.run<string>(wrappedCode, '/entry.mjs');
+    const runResult = await runtime.run(wrappedCode, '/entry.mjs');
 
-    if (runResult.exitCode !== 0) {
+    if (runResult.code !== 0) {
       return {
         success: false,
-        error: runResult.stderr || `Exit code ${runResult.exitCode}`,
+        error: `Execution failed with code ${runResult.code}`,
       };
     }
 
-    // Parse the isolate output
-    let parsed: { result: unknown; calls: Array<{ name: string; args: unknown }> };
-    try {
-      const output = runResult.returnValue ?? runResult.stdout;
-      parsed = JSON.parse(typeof output === 'string' ? output : JSON.stringify(output));
-    } catch {
-      // No tool calls, just return whatever the isolate produced
-      return { success: true, result: runResult.returnValue ?? runResult.stdout };
+    const output = runResult.exports?.default as
+      | { result: unknown; calls: Array<{ name: string; args: unknown }> }
+      | undefined;
+
+    if (!output) {
+      return { success: true, result: null };
     }
 
     // Execute accumulated tool calls on the host
-    if (parsed.calls && parsed.calls.length > 0) {
+    if (output.calls && output.calls.length > 0) {
       const results: unknown[] = [];
-      for (const call of parsed.calls) {
+      for (const call of output.calls) {
         const fn = toolFunctions[call.name];
         if (!fn) {
           results.push({ error: `Unknown tool: ${call.name}` });
@@ -100,7 +98,7 @@ export async function executeCode(
       return { success: true, result: results.length === 1 ? results[0] : results };
     }
 
-    return { success: true, result: parsed.result };
+    return { success: true, result: output.result };
   } catch (err) {
     return { success: false, error: (err as Error).message };
   } finally {
