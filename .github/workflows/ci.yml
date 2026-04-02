@@ -15,5 +15,5 @@ jobs:
       - run: bun run lint
       - run: bun run format:check
       - run: bun test
-      - run: bun tsc --noEmit
+      - run: bunx tsc --noEmit
       - run: bun build src/index.ts --target=bun --outfile=dist/server.js
