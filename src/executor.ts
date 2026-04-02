@@ -1,4 +1,4 @@
-import { createNodeRuntime, createNodeDriver, type NodeRuntimeOptions } from 'secure-exec';
+import { NodeRuntime, createNodeDriver, createNodeRuntimeDriverFactory } from 'secure-exec';
 import type { Backend } from './backends.js';
 
 interface ExecuteResult {
@@ -13,9 +13,7 @@ export async function executeCode(
   backends: Map<string, Backend>,
   opts?: { memoryLimit?: number; cpuTimeLimitMs?: number },
 ): Promise<ExecuteResult> {
-  const allowedHosts = new Set<string>();
-
-  // Build the tool registry that the code can call
+  // Build the tool registry — maps prefixed names to backend tool calls
   const toolFunctions: Record<string, (args: unknown) => Promise<unknown>> = {};
 
   for (const [name, backend] of backends) {
@@ -31,22 +29,7 @@ export async function executeCode(
     }
   }
 
-  // Wrap the user code with the tool registry injected as global functions
-  const toolNames = Object.keys(toolFunctions);
-  const wrappedCode = `
-    export default async function() {
-      ${toolNames.map((n) => `const ${n} = async (args) => __callTool("${n}", args);`).join('\n      ')}
-
-      // User code
-      ${code}
-    }
-  `;
-
-  // Track pending tool calls from the isolate
-  let pendingResolve: ((value: unknown) => void) | null = null;
-  let pendingReject: ((reason: unknown) => void) | null = null;
-
-  const driver = createNodeDriver({
+  const systemDriver = createNodeDriver({
     permissions: {
       fs: () => ({ allow: false }),
       network: () => ({ allow: false }),
@@ -55,75 +38,69 @@ export async function executeCode(
     },
   });
 
-  const runtimeOpts: NodeRuntimeOptions = {
-    systemDriver: driver,
-    runtimeDriverFactory: driver,
+  const runtimeDriverFactory = createNodeRuntimeDriverFactory({
+    memoryLimit: opts?.memoryLimit ?? 64,
+  });
+
+  const runtime = new NodeRuntime({
+    systemDriver,
+    runtimeDriverFactory,
     memoryLimit: opts?.memoryLimit ?? 64,
     cpuTimeLimitMs: opts?.cpuTimeLimitMs ?? 10_000,
-  };
-
-  const runtime = new createNodeRuntime(runtimeOpts);
+  });
 
   try {
-    // Inject __callTool as a global binding
-    const ctx = await runtime.__unsafeCreateContext();
+    // The V8 isolate can't call out to the host mid-execution.
+    // Strategy: the code accumulates tool call requests, returns them,
+    // then we execute the calls on the host and return results.
+    const toolNames = Object.keys(toolFunctions);
 
-    const result = await runtime.run(
-      `
-      const __toolCallQueue = [];
-      globalThis.__callTool = async (name, args) => {
-        // Since we can't call out from the isolate directly,
-        // we accumulate tool calls and return them as part of the result
-        __toolCallQueue.push({ name, args });
-        return { _pending: true, _index: __toolCallQueue.length - 1 };
+    const wrappedCode = `
+      const __calls = [];
+      ${toolNames.map((n) => `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args }); return { __pending: i }; };`).join('\n')}
+
+      const __userResult = await (async () => { ${code} })();
+      JSON.stringify({ result: __userResult, calls: __calls });
+    `;
+
+    const runResult = await runtime.run<string>(wrappedCode, '/entry.mjs');
+
+    if (runResult.exitCode !== 0) {
+      return {
+        success: false,
+        error: runResult.stderr || `Exit code ${runResult.exitCode}`,
       };
-
-      const userFn = (${wrappedCode.trim().replace(/^export default /, '')});
-      const result = await userFn();
-      ({ result, toolCalls: __toolCallQueue });
-    `,
-      '/entry.mjs',
-    );
-
-    // Process any tool calls made by the code
-    if (
-      result.returnValue &&
-      typeof result.returnValue === 'object' &&
-      'toolCalls' in (result.returnValue as Record<string, unknown>)
-    ) {
-      const rv = result.returnValue as {
-        result: unknown;
-        toolCalls: Array<{ name: string; args: unknown }>;
-      };
-
-      if (rv.toolCalls.length > 0) {
-        // Execute tool calls sequentially and re-run with results
-        const toolResults: unknown[] = [];
-        for (const call of rv.toolCalls) {
-          const fn = toolFunctions[call.name];
-          if (!fn) {
-            toolResults.push({
-              error: `Unknown tool: ${call.name}`,
-            });
-            continue;
-          }
-          try {
-            const r = await fn(call.args);
-            toolResults.push(r);
-          } catch (err) {
-            toolResults.push({
-              error: (err as Error).message,
-            });
-          }
-        }
-
-        return { success: true, result: toolResults };
-      }
-
-      return { success: true, result: rv.result };
     }
 
-    return { success: true, result: result.returnValue };
+    // Parse the isolate output
+    let parsed: { result: unknown; calls: Array<{ name: string; args: unknown }> };
+    try {
+      const output = runResult.returnValue ?? runResult.stdout;
+      parsed = JSON.parse(typeof output === 'string' ? output : JSON.stringify(output));
+    } catch {
+      // No tool calls, just return whatever the isolate produced
+      return { success: true, result: runResult.returnValue ?? runResult.stdout };
+    }
+
+    // Execute accumulated tool calls on the host
+    if (parsed.calls && parsed.calls.length > 0) {
+      const results: unknown[] = [];
+      for (const call of parsed.calls) {
+        const fn = toolFunctions[call.name];
+        if (!fn) {
+          results.push({ error: `Unknown tool: ${call.name}` });
+          continue;
+        }
+        try {
+          results.push(await fn(call.args));
+        } catch (err) {
+          results.push({ error: (err as Error).message });
+        }
+      }
+      return { success: true, result: results.length === 1 ? results[0] : results };
+    }
+
+    return { success: true, result: parsed.result };
   } catch (err) {
     return { success: false, error: (err as Error).message };
   } finally {
