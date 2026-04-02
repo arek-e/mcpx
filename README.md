@@ -28,8 +28,6 @@ Inspired by [Cloudflare's Code Mode pattern](https://github.com/cloudflare/agent
 
 ## Works with
 
-mcpx supports **stdio** and **HTTP (Streamable HTTP)** transports — it works with any MCP-compatible agent.
-
 <table>
 <tr>
 <td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Code</b></td>
@@ -42,23 +40,41 @@ mcpx supports **stdio** and **HTTP (Streamable HTTP)** transports — it works w
 </tr>
 </table>
 
-## Quick start
+Supports **stdio** and **HTTP (Streamable HTTP)** — works with any MCP-compatible agent.
+
+---
+
+## Solo developer
+
+Run mcpx locally as a stdio subprocess. No server, no Docker, no Kubernetes.
+
+### 1. Create config
 
 ```bash
-# Generate config by importing your existing MCP servers
+# Import your existing MCP servers from .mcp.json
 bunx mcpx-tools init
 
-# Or create an empty config
+# Or start with a blank template
 bunx mcpx-tools init --empty
-
-# Edit mcpx.json with your backends
-# Then run:
-bunx mcpx-tools stdio mcpx.json
 ```
 
-## Installation
+Edit `mcpx.json` to add your backends:
 
-mcpx works as a **stdio** subprocess (local) or **HTTP** server (team). Any MCP-compatible agent can connect.
+```json
+{
+  "port": 3100,
+  "backends": {
+    "my-server": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"],
+      "env": { "API_KEY": "${MY_API_KEY}" }
+    }
+  }
+}
+```
+
+### 2. Connect your agent
 
 <details>
 <summary><b>Claude Code</b></summary>
@@ -107,6 +123,104 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.mcpx]
+command = "bunx"
+args = ["mcpx-tools", "stdio", "mcpx.json"]
+```
+
+</details>
+
+<details>
+<summary><b>Amp / OpenCode / Pi / Mono</b></summary>
+
+Any agent that supports stdio MCP:
+
+```bash
+bunx mcpx-tools stdio mcpx.json
+```
+
+Point your agent's MCP config at this command.
+
+</details>
+
+---
+
+## Team deployment
+
+Run mcpx as an HTTP server — one endpoint for your whole team. Agents connect over the network. Deploy on Kubernetes, Docker, or a VPS.
+
+### 1. Deploy
+
+**Docker:**
+
+```bash
+docker compose up -d
+```
+
+**Kubernetes (Helm):**
+
+```bash
+helm install mcpx ./helm/mcpx \
+  --namespace mcpx --create-namespace \
+  --set existingSecret=mcpx-secrets \
+  --set ingress.enabled=true \
+  --set ingress.host=mcp.yourcompany.com
+```
+
+**Standalone:**
+
+```bash
+bunx mcpx-tools mcpx.json
+# → http://localhost:3100/mcp
+```
+
+### 2. Connect your agent
+
+All agents point at the same HTTP endpoint. Auth is handled by a bearer token.
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+```bash
+claude mcp add-json mcpx '{"type":"http","url":"https://mcp.yourcompany.com/mcp","headers":{"Authorization":"Bearer YOUR_TOKEN"}}'
+```
+
+Or in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "type": "http",
+      "url": "https://mcp.yourcompany.com/mcp",
+      "headers": { "Authorization": "Bearer ${MCPX_AUTH_TOKEN}" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "url": "https://mcp.yourcompany.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Codex</b></summary>
+
+```toml
+[mcp_servers.mcpx]
 url = "https://mcp.yourcompany.com/mcp"
 bearer_token_env_var = "MCPX_AUTH_TOKEN"
 ```
@@ -114,64 +228,20 @@ bearer_token_env_var = "MCPX_AUTH_TOKEN"
 </details>
 
 <details>
-<summary><b>Amp</b></summary>
+<summary><b>Any agent (HTTP)</b></summary>
 
-Add to `~/.amp/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "command": "bunx",
-      "args": ["mcpx-tools", "stdio", "mcpx.json"]
-    }
-  }
-}
-```
+Point at `https://mcp.yourcompany.com/mcp` with header `Authorization: Bearer YOUR_TOKEN`.
 
 </details>
 
-<details>
-<summary><b>OpenCode</b></summary>
+### Team benefits
 
-Add to `opencode.json` or `~/.config/opencode/opencode.json`:
+- **One config, all tools** — Grafana, Plane, GitHub, K8s behind one endpoint
+- **Credentials stay on the server** — devs never see API keys
+- **RBAC via gateway** — pair with [Pomerium](https://pomerium.com) or [agentgateway](https://agentgateway.dev) for per-team tool access
+- **50 tools → 2 tools** — same context savings for every team member
 
-```json
-{
-  "mcp": {
-    "mcpx": {
-      "type": "local",
-      "command": ["bunx", "mcpx-tools", "stdio", "mcpx.json"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Pi / Mono</b></summary>
-
-Any agent that supports stdio MCP servers:
-
-```bash
-bunx mcpx-tools stdio mcpx.json
-```
-
-</details>
-
-<details>
-<summary><b>HTTP (any agent)</b></summary>
-
-For agents that support remote MCP, point at your mcpx server:
-
-```
-https://mcp.yourcompany.com/mcp
-```
-
-With auth header: `Authorization: Bearer YOUR_TOKEN`
-
-</details>
+---
 
 ## Configuration
 
@@ -182,7 +252,7 @@ With auth header: `Authorization: Bearer YOUR_TOKEN`
   "port": 3100,
   "authToken": "${MCPX_AUTH_TOKEN}",
   "backends": {
-    "my-mcp-server": {
+    "my-server": {
       "transport": "stdio",
       "command": "npx",
       "args": ["-y", "some-mcp-server"],
@@ -195,16 +265,6 @@ With auth header: `Authorization: Bearer YOUR_TOKEN`
 ```
 
 Environment variables in `${VAR}` syntax are interpolated from `process.env`.
-
-## Deploy on Kubernetes
-
-```bash
-helm install mcpx ./helm/mcpx \
-  --namespace mcpx --create-namespace \
-  --set existingSecret=mcpx-secrets \
-  --set ingress.enabled=true \
-  --set ingress.host=mcp.yourcompany.com
-```
 
 ## How it works
 
