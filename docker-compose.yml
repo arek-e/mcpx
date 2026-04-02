@@ -1,0 +1,9 @@
+services:
+  mcpx:
+    build: .
+    ports:
+      - '3100:3100'
+    volumes:
+      - ./mcpx.json:/app/mcpx.json:ro
+    environment:
+      - MCPX_AUTH_TOKEN=dev-token
