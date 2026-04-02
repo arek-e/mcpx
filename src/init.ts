@@ -2,36 +2,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 
-const presets: Record<string, object> = {
-  grafana: {
-    transport: "stdio",
-    command: "uvx",
-    args: ["mcp-grafana"],
-    env: {
-      GRAFANA_URL: "${GRAFANA_URL}",
-      GRAFANA_SERVICE_ACCOUNT_TOKEN: "${GRAFANA_TOKEN}",
-    },
-  },
-  plane: {
-    transport: "stdio",
-    command: "uvx",
-    args: ["plane-mcp-server", "stdio"],
-    env: {
-      PLANE_API_KEY: "${PLANE_API_KEY}",
-      PLANE_WORKSPACE_SLUG: "${PLANE_WORKSPACE_SLUG}",
-      PLANE_BASE_URL: "${PLANE_BASE_URL}",
-    },
-  },
-  github: {
-    transport: "stdio",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-github"],
-    env: {
-      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}",
-    },
-  },
-};
-
 interface McpJsonServer {
   command?: string;
   args?: string[];
@@ -42,10 +12,7 @@ interface McpJsonServer {
 
 /** Find and parse existing .mcp.json files from Claude Code */
 function findExistingMcpConfigs(): Record<string, McpJsonServer> {
-  const locations = [
-    resolve(".mcp.json"), // project-level
-    join(homedir(), ".claude.json"), // user-level
-  ];
+  const locations = [resolve(".mcp.json"), join(homedir(), ".claude.json")];
 
   const servers: Record<string, McpJsonServer> = {};
 
@@ -67,12 +34,9 @@ function findExistingMcpConfigs(): Record<string, McpJsonServer> {
 }
 
 /** Convert a Claude Code MCP server config to an mcpx backend config */
-function convertToBackend(name: string, server: McpJsonServer): object | null {
+function convertToBackend(server: McpJsonServer): object | null {
   if (server.type === "http" || server.url) {
-    return {
-      transport: "http",
-      url: server.url,
-    };
+    return { transport: "http", url: server.url };
   }
 
   if (server.command) {
@@ -80,7 +44,7 @@ function convertToBackend(name: string, server: McpJsonServer): object | null {
       transport: "stdio",
       command: server.command,
       args: server.args ?? [],
-      env: server.env,
+      ...(server.env ? { env: server.env } : {}),
     };
   }
 
@@ -95,20 +59,38 @@ export function runInit(args?: string[]) {
     process.exit(1);
   }
 
-  const mode = args?.[0];
+  const isEmpty = args?.[0] === "--empty";
   let backends: Record<string, object> = {};
 
-  if (mode === "--import") {
-    // Import from existing Claude Code .mcp.json
+  if (isEmpty) {
+    // Empty config — user fills in manually
+    backends = {
+      "my-server": {
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "your-mcp-server"],
+        env: { API_KEY: "${YOUR_API_KEY}" },
+      },
+    };
+  } else {
+    // Default: scan for existing MCP configs
     console.log("Scanning for existing MCP server configs...");
     const existing = findExistingMcpConfigs();
 
     if (Object.keys(existing).length === 0) {
-      console.log("  No existing configs found. Using presets instead.\n");
-      backends = Object.fromEntries(Object.keys(presets).map((n) => [n, presets[n]]));
+      console.log("  No MCP servers found in .mcp.json or ~/.claude.json");
+      console.log("  Creating empty config — edit mcpx.json to add your backends.\n");
+      backends = {
+        "my-server": {
+          transport: "stdio",
+          command: "npx",
+          args: ["-y", "your-mcp-server"],
+          env: { API_KEY: "${YOUR_API_KEY}" },
+        },
+      };
     } else {
       for (const [name, server] of Object.entries(existing)) {
-        const backend = convertToBackend(name, server);
+        const backend = convertToBackend(server);
         if (backend) {
           backends[name] = backend;
           console.log(`  Imported: ${name}`);
@@ -117,38 +99,17 @@ export function runInit(args?: string[]) {
         }
       }
     }
-  } else if (args?.length && !args[0].startsWith("-")) {
-    // Selective presets: mcpx init grafana github
-    const selected = args.filter((b) => presets[b]);
-    if (selected.length === 0) {
-      console.error(`No matching presets. Available: ${Object.keys(presets).join(", ")}`);
-      process.exit(1);
-    }
-    backends = Object.fromEntries(selected.map((n) => [n, presets[n]]));
-  } else {
-    // Default: all presets
-    backends = Object.fromEntries(Object.keys(presets).map((n) => [n, presets[n]]));
   }
 
-  const config = {
-    port: 3100,
-    backends,
-  };
+  const config = { port: 3100, backends };
 
   writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
 
-  console.log(
-    `\nCreated mcpx.json with ${Object.keys(backends).length} backends: ${Object.keys(backends).join(", ")}`,
-  );
+  const count = Object.keys(backends).length;
+  console.log(`\nCreated mcpx.json with ${count} backend${count !== 1 ? "s" : ""}`);
   console.log();
   console.log("Next steps:");
-  console.log("  1. Set environment variables for your backends");
-  console.log("  2. Run: mcpx stdio mcpx.json");
-  console.log("  3. Or add to Claude Code:");
-  console.log("     claude mcp add mcpx -- bunx mcpx-tools stdio mcpx.json");
-  console.log();
-  console.log("Commands:");
-  console.log("  mcpx init                  — all presets (grafana, plane, github)");
-  console.log("  mcpx init grafana github   — specific presets");
-  console.log("  mcpx init --import         — import from existing .mcp.json");
+  console.log("  1. Edit mcpx.json — add or configure your MCP backends");
+  console.log("  2. Set environment variables referenced in the config");
+  console.log("  3. Run: bunx mcpx-tools stdio mcpx.json");
 }
