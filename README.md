@@ -33,17 +33,12 @@ mcpx supports **stdio** and **HTTP (Streamable HTTP)** transports — it works w
 <table>
 <tr>
 <td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Code</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Desktop</b></td>
 <td align="center"><img src="https://cdn.simpleicons.org/cursor/181818" width="24" height="24" alt="Cursor"><br><b>Cursor</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/githubcopilot/181818" width="24" height="24" alt="Copilot"><br><b>VS Code Copilot</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/windsurf/181818" width="24" height="24" alt="Windsurf"><br><b>Windsurf</b></td>
-</tr>
-<tr>
-<td align="center"><img src="https://cdn.simpleicons.org/zedindustries/181818" width="24" height="24" alt="Zed"><br><b>Zed</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/googlegemini/4285F4" width="24" height="24" alt="Gemini"><br><b>Gemini CLI</b></td>
 <td align="center"><b>Codex</b></td>
-<td align="center"><b>Cline</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/amp/181818" width="24" height="24" alt="Amp"><br><b>Amp</b></td>
 <td align="center"><b>OpenCode</b></td>
+<td align="center"><b>Pi</b></td>
+<td align="center"><b>Mono</b></td>
 </tr>
 </table>
 
@@ -61,24 +56,18 @@ bunx mcpx-tools init --empty
 bunx mcpx-tools stdio mcpx.json
 ```
 
-## Installation per agent
+## Installation
+
+mcpx works as a **stdio** subprocess (local) or **HTTP** server (team). Any MCP-compatible agent can connect.
 
 <details>
 <summary><b>Claude Code</b></summary>
-
-**stdio (local):**
 
 ```bash
 claude mcp add mcpx -- bunx mcpx-tools stdio mcpx.json
 ```
 
-**HTTP (team server):**
-
-```bash
-claude mcp add-json mcpx '{"type":"http","url":"https://mcp.yourcompany.com/mcp","headers":{"Authorization":"Bearer YOUR_TOKEN"}}'
-```
-
-Or add to `.mcp.json` (checked into git — teammates get it automatically):
+Or add to `.mcp.json` (checked into git):
 
 ```json
 {
@@ -86,24 +75,6 @@ Or add to `.mcp.json` (checked into git — teammates get it automatically):
     "mcpx": {
       "command": "bunx",
       "args": ["mcpx-tools", "stdio", "mcpx.json"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Claude Desktop</b></summary>
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "command": "bunx",
-      "args": ["mcpx-tools", "stdio", "/path/to/mcpx.json"]
     }
   }
 }
@@ -114,20 +85,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 <details>
 <summary><b>Cursor</b></summary>
 
-Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "url": "https://mcp.yourcompany.com/mcp",
-      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
-    }
-  }
-}
-```
-
-For local stdio:
+Add to `~/.cursor/mcp.json` or `.cursor/mcp.json`:
 
 ```json
 {
@@ -143,104 +101,7 @@ For local stdio:
 </details>
 
 <details>
-<summary><b>VS Code + Copilot</b></summary>
-
-Add to `.vscode/mcp.json` (requires VS Code 1.101+):
-
-```json
-{
-  "servers": {
-    "mcpx": {
-      "type": "http",
-      "url": "https://mcp.yourcompany.com/mcp"
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Windsurf</b></summary>
-
-Add to `~/.codeium/windsurf/mcp_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "serverUrl": "https://mcp.yourcompany.com/mcp",
-      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
-    }
-  }
-}
-```
-
-Note: Windsurf uses `serverUrl` (not `url`).
-
-</details>
-
-<details>
-<summary><b>Cline</b></summary>
-
-Add to `cline_mcp_settings.json` (via Cline sidebar):
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "type": "streamableHttp",
-      "url": "https://mcp.yourcompany.com/mcp",
-      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
-    }
-  }
-}
-```
-
-Note: Cline requires `"streamableHttp"` (camelCase).
-
-</details>
-
-<details>
-<summary><b>OpenCode</b></summary>
-
-Add to `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
-
-```json
-{
-  "mcp": {
-    "mcpx": {
-      "type": "remote",
-      "url": "https://mcp.yourcompany.com/mcp"
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Gemini CLI</b></summary>
-
-Add to `~/.gemini/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "httpUrl": "https://mcp.yourcompany.com/mcp",
-      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
-    }
-  }
-}
-```
-
-Note: Gemini CLI uses `httpUrl` (not `url`).
-
-</details>
-
-<details>
-<summary><b>Codex (OpenAI)</b></summary>
+<summary><b>Codex</b></summary>
 
 Add to `~/.codex/config.toml`:
 
@@ -253,24 +114,62 @@ bearer_token_env_var = "MCPX_AUTH_TOKEN"
 </details>
 
 <details>
-<summary><b>Zed</b></summary>
+<summary><b>Amp</b></summary>
 
-Add to Zed `settings.json`:
+Add to `~/.amp/settings.json`:
 
 ```json
 {
-  "context_servers": {
+  "mcpServers": {
     "mcpx": {
-      "command": {
-        "path": "bunx",
-        "args": ["mcpx-tools", "stdio", "mcpx.json"]
-      }
+      "command": "bunx",
+      "args": ["mcpx-tools", "stdio", "mcpx.json"]
     }
   }
 }
 ```
 
-Zed supports stdio only.
+</details>
+
+<details>
+<summary><b>OpenCode</b></summary>
+
+Add to `opencode.json` or `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "mcpx": {
+      "type": "local",
+      "command": ["bunx", "mcpx-tools", "stdio", "mcpx.json"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Pi / Mono</b></summary>
+
+Any agent that supports stdio MCP servers:
+
+```bash
+bunx mcpx-tools stdio mcpx.json
+```
+
+</details>
+
+<details>
+<summary><b>HTTP (any agent)</b></summary>
+
+For agents that support remote MCP, point at your mcpx server:
+
+```
+https://mcp.yourcompany.com/mcp
+```
+
+With auth header: `Authorization: Bearer YOUR_TOKEN`
 
 </details>
 
