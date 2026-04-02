@@ -17,10 +17,17 @@ const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8")
 };
 const VERSION = pkg.version;
 
-// stdio mode: mcpx stdio mcpx.json
-// In stdio mode we start the stdio server and the process stays alive via the transport.
-// The Bun HTTP export below is never reached.
-if (process.argv[2] === "stdio") {
+const command = process.argv[2];
+
+// mcpx init [backend...]
+if (command === "init") {
+  const { runInit } = await import("./init.js");
+  runInit(process.argv.slice(3));
+  process.exit(0);
+}
+
+// mcpx stdio mcpx.json
+if (command === "stdio") {
   const configPath = process.argv[3] ?? "mcpx.json";
   await startStdioServer(configPath);
   // Intentional: no process.exit() — StdioServerTransport keeps the event loop alive.

@@ -1,5 +1,5 @@
 {
-  "name": "mcpx",
+  "name": "mcpx-server",
   "version": "0.1.0",
   "description": "Self-hosted MCP Code Mode gateway — aggregate multiple MCP servers behind 2 tools with V8 isolate execution",
   "keywords": [
@@ -17,8 +17,13 @@
   "bin": {
     "mcpx": "./src/index.ts"
   },
+  "files": [
+    "src/",
+    "mcpx.example.json",
+    "LICENSE"
+  ],
   "type": "module",
-  "main": "dist/server.js",
+  "main": "src/index.ts",
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --target=bun --minify --outfile=dist/server.js",
