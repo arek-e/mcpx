@@ -2,18 +2,13 @@
 
 ![CI](https://github.com/arek-e/mcpx/actions/workflows/ci.yml/badge.svg)
 
-Self-hosted MCP Code Mode gateway. Aggregate multiple MCP servers behind **2 tools** with V8 isolate execution.
+Collapse multiple MCP servers into **2 tools**. Your agent writes code to call them instead of loading 100+ tool schemas into context.
 
-Instead of exposing 100+ tools to your LLM (eating context tokens), mcpx exposes **`search`** and **`execute`**. The LLM discovers tools via search, then writes JavaScript code that calls them. Code runs in a secure V8 isolate via [secure-exec](https://github.com/rivet-dev/secure-exec).
+mcpx sits between your agent and your MCP servers. Instead of registering every tool (which eats context tokens), it exposes just **`search`** and **`execute`**. The agent discovers tools via search, writes JavaScript to call them, and the code runs in a sandboxed [V8 isolate](https://github.com/rivet-dev/secure-exec).
 
 ```
-Your agent → mcpx (2 tools, ~1,000 tokens)
-                 ↓
-             search("grafana dashboards")
-             → returns type definitions + params
-                 ↓
-             execute("const r = await grafana_search_dashboards({ query: 'pods' }); return r;")
-             → runs in V8 isolate → calls Grafana MCP → returns result
+Without mcpx:  agent ← 120 tool schemas (~84,000 tokens)
+With mcpx:     agent ← 2 tools (~1,000 tokens) → writes JS → mcpx executes → calls real tools
 ```
 
 ## Why
