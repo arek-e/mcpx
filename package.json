@@ -23,7 +23,12 @@
     "dev": "bun run --watch src/index.ts",
     "build": "bun build src/index.ts --target=bun --minify --outfile=dist/server.js",
     "start": "bun dist/server.js",
-    "test": "bun test"
+    "test": "bun test",
+    "lint": "oxlint src/",
+    "format": "biome format --write src/",
+    "format:check": "biome format src/",
+    "check": "bun run lint && bun run format:check",
+    "precommit": "bun run check && bun test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -31,6 +36,8 @@
     "secure-exec": "^0.2.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.14"
+    "@biomejs/biome": "^2.4.10",
+    "@types/bun": "^1.2.14",
+    "oxlint": "^1.58.0"
   }
 }

@@ -1,6 +1,6 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { BackendConfig } from './config.js';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { BackendConfig } from "./config.js";
 
 export interface ToolInfo {
   name: string;
@@ -21,10 +21,10 @@ async function connectStdio(name: string, config: BackendConfig): Promise<Backen
   const transport = new StdioClientTransport({
     command: config.command,
     args: config.args ?? [],
-    env: { ...process.env, ...(config.env ?? {}) } as Record<string, string>,
+    env: { ...process.env, ...config.env } as Record<string, string>,
   });
 
-  const client = new Client({ name: `mcpx-${name}`, version: '0.1.0' });
+  const client = new Client({ name: `mcpx-${name}`, version: "0.1.0" });
   await client.connect(transport);
 
   const { tools } = await client.listTools();
@@ -46,10 +46,10 @@ export async function connectBackends(
 
   for (const [name, config] of Object.entries(configs)) {
     try {
-      if (config.transport === 'stdio') {
+      if (config.transport === "stdio") {
         const backend = await connectStdio(name, config);
         backends.set(name, backend);
-      } else if (config.transport === 'http') {
+      } else if (config.transport === "http") {
         // TODO: implement HTTP/SSE client transport
         console.log(`  ${name}: http transport not yet implemented, skipping`);
       }
@@ -64,9 +64,9 @@ export async function connectBackends(
 /** Generate TypeScript type definitions from all backend tools for the LLM */
 export function generateTypeDefinitions(backends: Map<string, Backend>): string {
   const lines: string[] = [
-    '// Available MCP tool functions — call these in your execute code',
-    '// Each function returns a Promise<{ content: Array<{ type: string, text: string }> }>',
-    '',
+    "// Available MCP tool functions — call these in your execute code",
+    "// Each function returns a Promise<{ content: Array<{ type: string, text: string }> }>",
+    "",
   ];
 
   for (const [name, backend] of backends) {
@@ -78,19 +78,19 @@ export function generateTypeDefinitions(backends: Map<string, Backend>): string 
           )
             .map(([k, v]) => {
               const required = (tool.inputSchema.required as string[] | undefined)?.includes(k);
-              return `${k}${required ? '' : '?'}: ${v.type === 'array' ? 'any[]' : (v.type ?? 'any')}`;
+              return `${k}${required ? "" : "?"}: ${v.type === "array" ? "any[]" : (v.type ?? "any")}`;
             })
-            .join(', ')
-        : '';
-      const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : '';
+            .join(", ")
+        : "";
+      const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : "";
       lines.push(
         `declare function ${name}_${sanitizeName(tool.name)}(args: { ${params} }): Promise<any>;${desc}`,
       );
     }
-    lines.push('');
+    lines.push("");
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /** Generate a compact tool listing for the search tool description */
@@ -98,13 +98,13 @@ export function generateToolListing(backends: Map<string, Backend>): string {
   const lines: string[] = [];
   for (const [name, backend] of backends) {
     for (const tool of backend.tools) {
-      const desc = tool.description?.slice(0, 60) ?? '';
+      const desc = tool.description?.slice(0, 60) ?? "";
       lines.push(`${name}_${sanitizeName(tool.name)}: ${desc}`);
     }
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-function sanitizeName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_]/g, '_');
+export function sanitizeName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, "_");
 }

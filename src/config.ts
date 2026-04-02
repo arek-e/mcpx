@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync } from "node:fs";
 
 export interface BackendConfig {
   /** Transport: stdio spawns a subprocess, http connects to a remote MCP server */
-  transport: 'stdio' | 'http';
+  transport: "stdio" | "http";
   /** For stdio: command to run */
   command?: string;
   /** For stdio: arguments */
@@ -24,7 +24,7 @@ export interface McpxConfig {
 
 /** Interpolate ${VAR} references from process.env */
 function interpolate(value: string): string {
-  return value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? '');
+  return value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
 }
 
 function interpolateRecord(record: Record<string, string>): Record<string, string> {
@@ -36,7 +36,7 @@ function interpolateRecord(record: Record<string, string>): Record<string, strin
 }
 
 export function loadConfig(path: string): McpxConfig {
-  const raw = readFileSync(path, 'utf-8');
+  const raw = readFileSync(path, "utf-8");
 
   // Simple YAML-like parser for our config format
   // For production, use a proper YAML parser — keeping deps minimal for now
