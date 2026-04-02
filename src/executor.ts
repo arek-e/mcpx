@@ -1,5 +1,5 @@
-import { NodeRuntime, createNodeDriver, createNodeRuntimeDriverFactory } from "secure-exec";
-import type { Backend } from "./backends.js";
+import { NodeRuntime, createNodeDriver, createNodeRuntimeDriverFactory } from 'secure-exec';
+import type { Backend } from './backends.js';
 
 interface ExecuteResult {
   success: boolean;
@@ -38,9 +38,7 @@ export async function executeCode(
     },
   });
 
-  const runtimeDriverFactory = createNodeRuntimeDriverFactory({
-    memoryLimit: opts?.memoryLimit ?? 64,
-  });
+  const runtimeDriverFactory = createNodeRuntimeDriverFactory({});
 
   const runtime = new NodeRuntime({
     systemDriver,
@@ -57,13 +55,13 @@ export async function executeCode(
 
     const wrappedCode = `
 const __calls = [];
-${toolNames.map((n) => `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args: args || {} }); return { __pending: i }; };`).join("\n")}
+${toolNames.map((n) => `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args: args || {} }); return { __pending: i }; };`).join('\n')}
 
 const __userResult = await (async () => { ${code} })();
 export default { result: __userResult, calls: __calls };
 `;
 
-    const runResult = await runtime.run(wrappedCode, "/entry.mjs");
+    const runResult = await runtime.run(wrappedCode, '/entry.mjs');
 
     if (runResult.code !== 0) {
       return {
@@ -72,7 +70,7 @@ export default { result: __userResult, calls: __calls };
       };
     }
 
-    const output = runResult.exports?.default as
+    const output = (runResult.exports as Record<string, unknown>)?.default as
       | { result: unknown; calls: Array<{ name: string; args: unknown }> }
       | undefined;
 
@@ -107,5 +105,5 @@ export default { result: __userResult, calls: __calls };
 }
 
 function sanitizeName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_]/g, "_");
+  return name.replace(/[^a-zA-Z0-9_]/g, '_');
 }
