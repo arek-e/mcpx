@@ -35,13 +35,13 @@ mcpx supports **stdio** and **HTTP (Streamable HTTP)** transports — it works w
 <td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Code</b></td>
 <td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Desktop</b></td>
 <td align="center"><img src="https://cdn.simpleicons.org/cursor/181818" width="24" height="24" alt="Cursor"><br><b>Cursor</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/visualstudiocode/007ACC" width="24" height="24" alt="VS Code"><br><b>VS Code Copilot</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/githubcopilot/181818" width="24" height="24" alt="Copilot"><br><b>VS Code Copilot</b></td>
 <td align="center"><img src="https://cdn.simpleicons.org/windsurf/181818" width="24" height="24" alt="Windsurf"><br><b>Windsurf</b></td>
 </tr>
 <tr>
-<td align="center"><img src="https://cdn.simpleicons.org/zed/181818" width="24" height="24" alt="Zed"><br><b>Zed</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/google/4285F4" width="24" height="24" alt="Gemini"><br><b>Gemini CLI</b></td>
-<td align="center"><img src="https://cdn.simpleicons.org/openai/181818" width="24" height="24" alt="OpenAI"><br><b>Codex</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/zedindustries/181818" width="24" height="24" alt="Zed"><br><b>Zed</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/googlegemini/4285F4" width="24" height="24" alt="Gemini"><br><b>Gemini CLI</b></td>
+<td align="center"><b>Codex</b></td>
 <td align="center"><b>Cline</b></td>
 <td align="center"><b>OpenCode</b></td>
 </tr>
