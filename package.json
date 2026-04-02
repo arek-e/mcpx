@@ -1,0 +1,29 @@
+{
+  "name": "mcpx",
+  "version": "0.1.0",
+  "description": "Self-hosted MCP Code Mode gateway — aggregate multiple MCP servers behind 2 tools with V8 isolate execution",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arek-e/mcpx"
+  },
+  "bin": {
+    "mcpx": "dist/server.js"
+  },
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --target=bun --minify --outfile=dist/server.js",
+    "start": "bun dist/server.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "hono": "^4.7.10",
+    "secure-exec": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.14"
+  }
+}

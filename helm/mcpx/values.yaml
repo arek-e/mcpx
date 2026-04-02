@@ -1,0 +1,35 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/arek-e/mcpx
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  port: 3100
+
+ingress:
+  enabled: false
+  className: nginx
+  host: mcp.example.com
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: mcpx-tls
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Mount config from a ConfigMap
+config:
+  # Inline JSON config — or use existingConfigMap
+  backends: {}
+
+# Secret environment variables (API keys, tokens)
+# Reference an existing secret with envFrom
+existingSecret: ''
