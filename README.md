@@ -4,16 +4,16 @@
 
 Self-hosted MCP Code Mode gateway. Aggregate multiple MCP servers behind **2 tools** with V8 isolate execution.
 
-Instead of exposing 100+ tools to your LLM (eating context tokens), mcpx exposes **`search`** and **`execute`**. The LLM discovers tools via search, then writes JavaScript code that calls them. Code runs in a secure V8 isolate via [secure-exec](https://github.com/nicholasgasior/secure-exec).
+Instead of exposing 100+ tools to your LLM (eating context tokens), mcpx exposes **`search`** and **`execute`**. The LLM discovers tools via search, then writes JavaScript code that calls them. Code runs in a secure V8 isolate via [secure-exec](https://github.com/rivet-dev/secure-exec).
 
 ```
-Claude Code → mcpx (2 tools, ~1,000 tokens)
-                  ↓
-              search("grafana dashboards")
-              → returns type definitions + params
-                  ↓
-              execute("const r = await grafana_search_dashboards({ query: 'pods' }); return r;")
-              → runs in V8 isolate → calls Grafana MCP → returns result
+Your agent → mcpx (2 tools, ~1,000 tokens)
+                 ↓
+             search("grafana dashboards")
+             → returns type definitions + params
+                 ↓
+             execute("const r = await grafana_search_dashboards({ query: 'pods' }); return r;")
+             → runs in V8 isolate → calls Grafana MCP → returns result
 ```
 
 ## Why
@@ -26,19 +26,253 @@ Claude Code → mcpx (2 tools, ~1,000 tokens)
 
 Inspired by [Cloudflare's Code Mode pattern](https://github.com/cloudflare/agents/tree/main/packages/codemode) — self-hosted, no Cloudflare dependency.
 
+## Works with
+
+mcpx supports **stdio** and **HTTP (Streamable HTTP)** transports — it works with any MCP-compatible agent.
+
+<table>
+<tr>
+<td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Code</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/anthropic/181818" width="24" height="24" alt="Claude"><br><b>Claude Desktop</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/cursor/181818" width="24" height="24" alt="Cursor"><br><b>Cursor</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/visualstudiocode/007ACC" width="24" height="24" alt="VS Code"><br><b>VS Code Copilot</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/windsurf/181818" width="24" height="24" alt="Windsurf"><br><b>Windsurf</b></td>
+</tr>
+<tr>
+<td align="center"><img src="https://cdn.simpleicons.org/zed/181818" width="24" height="24" alt="Zed"><br><b>Zed</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/google/4285F4" width="24" height="24" alt="Gemini"><br><b>Gemini CLI</b></td>
+<td align="center"><img src="https://cdn.simpleicons.org/openai/181818" width="24" height="24" alt="OpenAI"><br><b>Codex</b></td>
+<td align="center"><b>Cline</b></td>
+<td align="center"><b>OpenCode</b></td>
+</tr>
+</table>
+
 ## Quick start
 
 ```bash
-# Install
-bun install
+# Generate config by importing your existing MCP servers
+bunx mcpx-tools init
 
-# Configure backends
-cp mcpx.example.json mcpx.json
-# Edit mcpx.json with your MCP server configs
+# Or create an empty config
+bunx mcpx-tools init --empty
 
-# Run
-bun run dev
+# Edit mcpx.json with your backends
+# Then run:
+bunx mcpx-tools stdio mcpx.json
 ```
+
+## Installation per agent
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+**stdio (local):**
+
+```bash
+claude mcp add mcpx -- bunx mcpx-tools stdio mcpx.json
+```
+
+**HTTP (team server):**
+
+```bash
+claude mcp add-json mcpx '{"type":"http","url":"https://mcp.yourcompany.com/mcp","headers":{"Authorization":"Bearer YOUR_TOKEN"}}'
+```
+
+Or add to `.mcp.json` (checked into git — teammates get it automatically):
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "command": "bunx",
+      "args": ["mcpx-tools", "stdio", "mcpx.json"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "command": "bunx",
+      "args": ["mcpx-tools", "stdio", "/path/to/mcpx.json"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "url": "https://mcp.yourcompany.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+For local stdio:
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "command": "bunx",
+      "args": ["mcpx-tools", "stdio", "mcpx.json"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>VS Code + Copilot</b></summary>
+
+Add to `.vscode/mcp.json` (requires VS Code 1.101+):
+
+```json
+{
+  "servers": {
+    "mcpx": {
+      "type": "http",
+      "url": "https://mcp.yourcompany.com/mcp"
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Windsurf</b></summary>
+
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "serverUrl": "https://mcp.yourcompany.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+Note: Windsurf uses `serverUrl` (not `url`).
+
+</details>
+
+<details>
+<summary><b>Cline</b></summary>
+
+Add to `cline_mcp_settings.json` (via Cline sidebar):
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "type": "streamableHttp",
+      "url": "https://mcp.yourcompany.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+Note: Cline requires `"streamableHttp"` (camelCase).
+
+</details>
+
+<details>
+<summary><b>OpenCode</b></summary>
+
+Add to `opencode.json` (project) or `~/.config/opencode/opencode.json` (global):
+
+```json
+{
+  "mcp": {
+    "mcpx": {
+      "type": "remote",
+      "url": "https://mcp.yourcompany.com/mcp"
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Gemini CLI</b></summary>
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "httpUrl": "https://mcp.yourcompany.com/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+Note: Gemini CLI uses `httpUrl` (not `url`).
+
+</details>
+
+<details>
+<summary><b>Codex (OpenAI)</b></summary>
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.mcpx]
+url = "https://mcp.yourcompany.com/mcp"
+bearer_token_env_var = "MCPX_AUTH_TOKEN"
+```
+
+</details>
+
+<details>
+<summary><b>Zed</b></summary>
+
+Add to Zed `settings.json`:
+
+```json
+{
+  "context_servers": {
+    "mcpx": {
+      "command": {
+        "path": "bunx",
+        "args": ["mcpx-tools", "stdio", "mcpx.json"]
+      }
+    }
+  }
+}
+```
+
+Zed supports stdio only.
+
+</details>
 
 ## Configuration
 
@@ -49,13 +283,12 @@ bun run dev
   "port": 3100,
   "authToken": "${MCPX_AUTH_TOKEN}",
   "backends": {
-    "grafana": {
+    "my-mcp-server": {
       "transport": "stdio",
-      "command": "uvx",
-      "args": ["mcp-grafana"],
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"],
       "env": {
-        "GRAFANA_URL": "${GRAFANA_URL}",
-        "GRAFANA_SERVICE_ACCOUNT_TOKEN": "${GRAFANA_TOKEN}"
+        "API_KEY": "${MY_API_KEY}"
       }
     }
   }
@@ -63,69 +296,6 @@ bun run dev
 ```
 
 Environment variables in `${VAR}` syntax are interpolated from `process.env`.
-
-## Local / Solo Dev
-
-No server required. Run mcpx as a stdio subprocess directly in Claude Code — no Kubernetes, no Docker, no port.
-
-```bash
-# Install once
-bun add -g mcpx
-# or: npx mcpx, bunx mcpx (no install needed)
-
-# Run with your config
-mcpx stdio mcpx.json
-```
-
-All output goes to stderr; stdout is reserved for the MCP protocol.
-
-## Claude Code Plugin
-
-Add mcpx to any project via `.mcp.json` (checked into git — teammates get it automatically):
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "command": "bunx",
-      "args": ["mcpx", "stdio", "mcpx.json"],
-      "env": {
-        "GRAFANA_URL": "http://localhost:3000",
-        "GRAFANA_TOKEN": "your-token"
-      }
-    }
-  }
-}
-```
-
-Copy `.mcp.json.example` as a starting point:
-
-```bash
-cp .mcp.json.example .mcp.json
-# Edit .mcp.json with your credentials
-```
-
-## Connect to Claude Code (HTTP / team mode)
-
-```bash
-claude mcp add --transport http mcpx http://localhost:3100/mcp
-```
-
-Or in `.mcp.json` (per-project, checked into git):
-
-```json
-{
-  "mcpServers": {
-    "mcpx": {
-      "type": "http",
-      "url": "https://mcp.yourcompany.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCPX_AUTH_TOKEN}"
-      }
-    }
-  }
-}
-```
 
 ## Deploy on Kubernetes
 
@@ -141,30 +311,28 @@ helm install mcpx ./helm/mcpx \
 
 1. **On startup**: mcpx connects to all configured backend MCP servers (via stdio subprocesses or HTTP)
 2. **Tool discovery**: collects all tools from all backends, generates TypeScript type definitions
-3. **Exposes 2 tools** via MCP Streamable HTTP:
+3. **Exposes 2 tools** via MCP Streamable HTTP or stdio:
    - `search` — fuzzy search across all backend tools, returns matching type definitions + params
-   - `execute` — runs JavaScript in a V8 isolate with access to all backend tools as async functions
-4. **Execution**: code runs in [secure-exec](https://github.com/nicholasgasior/secure-exec) with deny-by-default permissions (no fs, no network, no child process). Tool calls are intercepted and routed to the real backend MCP servers.
+   - `execute` — runs JavaScript in a V8 isolate with access to all backend tools as functions
+4. **Execution**: code runs in [secure-exec](https://github.com/rivet-dev/secure-exec) with deny-by-default permissions (no fs, no network, no child process). Tool calls are intercepted and routed to the real backend MCP servers.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│ mcpx pod                                │
+│ mcpx                                    │
 │                                         │
-│  Hono HTTP server                       │
-│  ├── GET  /health                       │
-│  └── ALL  /mcp (MCP Streamable HTTP)   │
-│       ├── search → schema lookup        │
-│       └── execute → secure-exec V8      │
-│            ↓                            │
-│       V8 isolate (3.4MB, 16ms boot)     │
-│       deny-by-default permissions       │
-│            ↓                            │
-│       routes tool calls to backends:    │
-│       ├── grafana (stdio subprocess)    │
-│       ├── plane (stdio subprocess)      │
-│       └── github (stdio subprocess)    │
+│  MCP server (stdio or HTTP)             │
+│  ├── search → schema lookup             │
+│  └── execute → secure-exec V8           │
+│       ↓                                 │
+│  V8 isolate (3.4MB, 16ms boot)          │
+│  deny-by-default permissions            │
+│       ↓                                 │
+│  routes tool calls to backends:         │
+│  ├── grafana (stdio subprocess)         │
+│  ├── plane (stdio subprocess)           │
+│  └── github (stdio subprocess)          │
 └─────────────────────────────────────────┘
 ```
 
@@ -180,9 +348,9 @@ helm install mcpx ./helm/mcpx \
 
 - [Bun](https://bun.sh) — runtime
 - [Hono](https://hono.dev) — HTTP framework (14KB)
-- [secure-exec](https://github.com/nicholasgasior/secure-exec) — V8 isolate sandbox
+- [secure-exec](https://github.com/rivet-dev/secure-exec) — V8 isolate sandbox
+- [neverthrow](https://github.com/supermacro/neverthrow) — typed error handling
 - [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk) — MCP protocol
-- Tree-shaken build: `bun build --minify` produces a single optimized file
 
 ## License
 
