@@ -1,6 +1,8 @@
-import { Hono } from 'hono';
+// Entrypoint for stdio mode — Claude Code runs this directly as a subprocess
+// Usage: mcpx stdio mcpx.json
+// Or: bunx mcpx stdio mcpx.json
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { loadConfig } from './config.js';
 import {
@@ -10,44 +12,42 @@ import {
   type Backend,
 } from './backends.js';
 import { executeCode } from './executor.js';
-import { startStdioServer } from './stdio.js';
 
-// stdio mode: mcpx stdio mcpx.json
-// In stdio mode we start the stdio server and the process stays alive via the transport.
-// The Bun HTTP export below is never reached.
-if (process.argv[2] === 'stdio') {
-  const configPath = process.argv[3] ?? 'mcpx.json';
-  await startStdioServer(configPath);
-  // Intentional: no process.exit() — StdioServerTransport keeps the event loop alive.
+export async function startStdioServer(configPath: string): Promise<void> {
+  const config = loadConfig(configPath);
+
+  // In stdio mode, log to stderr so stdout stays clean for MCP protocol
+  process.stderr.write(`mcpx stdio starting...\n`);
+  process.stderr.write(`  config: ${configPath}\n`);
+  process.stderr.write(`  backends: ${Object.keys(config.backends).join(', ')}\n`);
+
+  const backends = await connectBackends(config.backends);
+
+  if (backends.size === 0) {
+    process.stderr.write('No backends connected. Exiting.\n');
+    process.exit(1);
+  }
+
+  const typeDefs = generateTypeDefinitions(backends);
+  const toolListing = generateToolListing(backends);
+  const totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
+
+  process.stderr.write(
+    `\n${totalTools} tools from ${backends.size} backends -> 2 Code Mode tools\n`,
+  );
+
+  const server = createMcpServer(backends, typeDefs, toolListing);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+
+  process.stderr.write('mcpx stdio ready\n');
 }
 
-// HTTP server mode (default)
-const configPath = process.argv[2] ?? 'mcpx.json';
-const config = loadConfig(configPath);
-
-console.log('mcpx starting...');
-console.log(`  config: ${configPath}`);
-console.log(`  port: ${config.port}`);
-console.log(`  backends: ${Object.keys(config.backends).join(', ')}`);
-
-// Connect to all backend MCP servers
-console.log('\nConnecting to backends:');
-const backends = await connectBackends(config.backends);
-
-if (backends.size === 0) {
-  console.error('No backends connected. Exiting.');
-  process.exit(1);
-}
-
-// Pre-generate type definitions and tool listing
-const typeDefs = generateTypeDefinitions(backends);
-const toolListing = generateToolListing(backends);
-
-const totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
-console.log(`\n${totalTools} tools from ${backends.size} backends → 2 Code Mode tools`);
-
-// Create the MCP server with 2 Code Mode tools
-function createMcpServer(): McpServer {
+function createMcpServer(
+  backends: Map<string, Backend>,
+  typeDefs: string,
+  toolListing: string,
+): McpServer {
   const server = new McpServer({
     name: 'mcpx',
     version: '0.1.0',
@@ -140,41 +140,3 @@ Example:
 
   return server;
 }
-
-// HTTP server with Hono
-const app = new Hono();
-
-// Health check
-app.get('/health', (c) => c.json({ status: 'ok', backends: backends.size, tools: totalTools }));
-
-// Auth middleware
-if (config.authToken) {
-  app.use('/mcp', async (c, next) => {
-    const auth = c.req.header('Authorization');
-    if (auth !== `Bearer ${config.authToken}`) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
-    await next();
-  });
-}
-
-// MCP endpoint — Streamable HTTP
-app.all('/mcp', async (c) => {
-  const server = createMcpServer();
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // Stateless mode
-  });
-
-  await server.connect(transport);
-  const response = await transport.handleRequest(c.req.raw);
-  return response;
-});
-
-console.log(`\nmcpx listening on http://localhost:${config.port}`);
-console.log(`  MCP endpoint: http://localhost:${config.port}/mcp`);
-console.log(`  Health: http://localhost:${config.port}/health`);
-
-export default {
-  port: config.port,
-  fetch: app.fetch,
-};

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mcpx": {
+      "command": "bunx",
+      "args": ["mcpx", "stdio", "mcpx.json"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_TOKEN": "your-token"
+      }
+    }
+  }
+}

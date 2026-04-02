@@ -1,5 +1,7 @@
 # mcpx
 
+![CI](https://github.com/arek-e/mcpx/actions/workflows/ci.yml/badge.svg)
+
 Self-hosted MCP Code Mode gateway. Aggregate multiple MCP servers behind **2 tools** with V8 isolate execution.
 
 Instead of exposing 100+ tools to your LLM (eating context tokens), mcpx exposes **`search`** and **`execute`**. The LLM discovers tools via search, then writes JavaScript code that calls them. Code runs in a secure V8 isolate via [secure-exec](https://github.com/nicholasgasior/secure-exec).
@@ -62,7 +64,48 @@ bun run dev
 
 Environment variables in `${VAR}` syntax are interpolated from `process.env`.
 
-## Connect to Claude Code
+## Local / Solo Dev
+
+No server required. Run mcpx as a stdio subprocess directly in Claude Code — no Kubernetes, no Docker, no port.
+
+```bash
+# Install once
+bun add -g mcpx
+# or: npx mcpx, bunx mcpx (no install needed)
+
+# Run with your config
+mcpx stdio mcpx.json
+```
+
+All output goes to stderr; stdout is reserved for the MCP protocol.
+
+## Claude Code Plugin
+
+Add mcpx to any project via `.mcp.json` (checked into git — teammates get it automatically):
+
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "command": "bunx",
+      "args": ["mcpx", "stdio", "mcpx.json"],
+      "env": {
+        "GRAFANA_URL": "http://localhost:3000",
+        "GRAFANA_TOKEN": "your-token"
+      }
+    }
+  }
+}
+```
+
+Copy `.mcp.json.example` as a starting point:
+
+```bash
+cp .mcp.json.example .mcp.json
+# Edit .mcp.json with your credentials
+```
+
+## Connect to Claude Code (HTTP / team mode)
 
 ```bash
 claude mcp add --transport http mcpx http://localhost:3100/mcp
