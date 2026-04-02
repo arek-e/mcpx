@@ -38,6 +38,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "hono": "^4.7.10",
+    "neverthrow": "^8.2.0",
     "secure-exec": "^0.2.0"
   },
   "devDependencies": {

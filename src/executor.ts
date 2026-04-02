@@ -1,10 +1,82 @@
-import { NodeRuntime, createNodeDriver, createNodeRuntimeDriverFactory } from 'secure-exec';
-import type { Backend } from './backends.js';
+import { NodeRuntime, createNodeDriver, createNodeRuntimeDriverFactory } from "secure-exec";
+import { ok, err, type Result } from "neverthrow";
+import type { Backend } from "./backends.js";
 
-interface ExecuteResult {
-  success: boolean;
-  result?: unknown;
-  error?: string;
+interface ToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+interface IsolateOutput {
+  result: unknown;
+  calls: ToolCall[];
+}
+
+type ToolFunction = (args: Record<string, unknown>) => Promise<unknown>;
+
+export type ExecuteError =
+  | { kind: "runtime"; code: number }
+  | { kind: "parse"; message: string }
+  | { kind: "exception"; message: string };
+
+/** Build a map of prefixed tool names → backend tool call functions */
+function buildToolRegistry(backends: Map<string, Backend>): Map<string, ToolFunction> {
+  const registry = new Map<string, ToolFunction>();
+
+  for (const [name, backend] of backends) {
+    for (const tool of backend.tools) {
+      const prefixed = `${name}_${sanitizeName(tool.name)}`;
+      registry.set(prefixed, async (args) => {
+        return backend.client.callTool({
+          name: tool.name,
+          arguments: args,
+        });
+      });
+    }
+  }
+
+  return registry;
+}
+
+/** Wrap user code with tool stubs that accumulate calls */
+function wrapCode(code: string, toolNames: string[]): string {
+  const stubs = toolNames
+    .map(
+      (n) =>
+        `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args: args || {} }); return { __pending: i }; };`,
+    )
+    .join("\n");
+
+  return `
+const __calls = [];
+${stubs}
+
+const __userResult = await (async () => { ${code} })();
+export default { result: __userResult, calls: __calls };
+`;
+}
+
+/** Execute accumulated tool calls on the host and return results */
+async function executePendingCalls(
+  calls: ToolCall[],
+  registry: Map<string, ToolFunction>,
+): Promise<unknown[]> {
+  const results: unknown[] = [];
+
+  for (const call of calls) {
+    const fn = registry.get(call.name);
+    if (!fn) {
+      results.push({ error: `Unknown tool: ${call.name}` });
+      continue;
+    }
+    try {
+      results.push(await fn(call.args));
+    } catch (e) {
+      results.push({ error: (e as Error).message });
+    }
+  }
+
+  return results;
 }
 
 /** Execute LLM-generated code in a V8 isolate with access to backend MCP tools */
@@ -12,22 +84,8 @@ export async function executeCode(
   code: string,
   backends: Map<string, Backend>,
   opts?: { memoryLimit?: number; cpuTimeLimitMs?: number },
-): Promise<ExecuteResult> {
-  // Build the tool registry — maps prefixed names to backend tool calls
-  const toolFunctions: Record<string, (args: unknown) => Promise<unknown>> = {};
-
-  for (const [name, backend] of backends) {
-    for (const tool of backend.tools) {
-      const prefixedName = `${name}_${sanitizeName(tool.name)}`;
-      toolFunctions[prefixedName] = async (args: unknown) => {
-        const result = await backend.client.callTool({
-          name: tool.name,
-          arguments: args as Record<string, unknown>,
-        });
-        return result;
-      };
-    }
-  }
+): Promise<Result<unknown, ExecuteError>> {
+  const registry = buildToolRegistry(backends);
 
   const systemDriver = createNodeDriver({
     permissions: {
@@ -48,62 +106,33 @@ export async function executeCode(
   });
 
   try {
-    // V8 isolate can't call out to the host mid-execution.
-    // Strategy: code accumulates tool calls synchronously, returns them,
-    // then we execute calls on the host and return results.
-    const toolNames = Object.keys(toolFunctions);
-
-    const wrappedCode = `
-const __calls = [];
-${toolNames.map((n) => `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args: args || {} }); return { __pending: i }; };`).join('\n')}
-
-const __userResult = await (async () => { ${code} })();
-export default { result: __userResult, calls: __calls };
-`;
-
-    const runResult = await runtime.run(wrappedCode, '/entry.mjs');
+    const wrappedCode = wrapCode(code, [...registry.keys()]);
+    const runResult = await runtime.run(wrappedCode, "/entry.mjs");
 
     if (runResult.code !== 0) {
-      return {
-        success: false,
-        error: `Execution failed with code ${runResult.code}`,
-      };
+      return err({ kind: "runtime", code: runResult.code });
     }
 
-    const output = (runResult.exports as Record<string, unknown>)?.default as
-      | { result: unknown; calls: Array<{ name: string; args: unknown }> }
-      | undefined;
+    const exports = runResult.exports as Record<string, unknown>;
+    const output = exports?.default as IsolateOutput | undefined;
 
     if (!output) {
-      return { success: true, result: null };
+      return ok(null);
     }
 
-    // Execute accumulated tool calls on the host
-    if (output.calls && output.calls.length > 0) {
-      const results: unknown[] = [];
-      for (const call of output.calls) {
-        const fn = toolFunctions[call.name];
-        if (!fn) {
-          results.push({ error: `Unknown tool: ${call.name}` });
-          continue;
-        }
-        try {
-          results.push(await fn(call.args));
-        } catch (err) {
-          results.push({ error: (err as Error).message });
-        }
-      }
-      return { success: true, result: results.length === 1 ? results[0] : results };
+    if (output.calls?.length > 0) {
+      const results = await executePendingCalls(output.calls, registry);
+      return ok(results.length === 1 ? results[0] : results);
     }
 
-    return { success: true, result: output.result };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
+    return ok(output.result);
+  } catch (e) {
+    return err({ kind: "exception", message: (e as Error).message });
   } finally {
     runtime.dispose();
   }
 }
 
-function sanitizeName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_]/g, '_');
+export function sanitizeName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, "_");
 }

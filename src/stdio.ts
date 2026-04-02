@@ -117,9 +117,11 @@ Example:
     async ({ code }) => {
       const result = await executeCode(code, backends);
 
-      if (!result.success) {
+      if (result.isErr()) {
+        const e = result.error;
+        const msg = e.kind === "runtime" ? `Execution failed with code ${e.code}` : e.message;
         return {
-          content: [{ type: "text" as const, text: `Error: ${result.error}` }],
+          content: [{ type: "text" as const, text: `Error: ${msg}` }],
           isError: true,
         };
       }
@@ -129,9 +131,9 @@ Example:
           {
             type: "text" as const,
             text:
-              typeof result.result === "string"
-                ? result.result
-                : JSON.stringify(result.result, null, 2),
+              typeof result.value === "string"
+                ? result.value
+                : JSON.stringify(result.value, null, 2),
           },
         ],
       };
