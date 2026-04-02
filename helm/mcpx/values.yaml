@@ -4,6 +4,7 @@ image:
   repository: ghcr.io/arek-e/mcpx
   tag: latest
   pullPolicy: IfNotPresent
+  pullSecrets: []
 
 service:
   port: 3100

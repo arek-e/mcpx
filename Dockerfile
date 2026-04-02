@@ -1,8 +1,10 @@
 FROM oven/bun:1-slim
 
 # Install Python + uvx for stdio MCP backends (grafana, plane)
+# Also install build tools for native node addons (better-sqlite3 via secure-exec)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip pipx curl \
+    build-essential python3-dev \
     && pipx install uv \
     && rm -rf /var/lib/apt/lists/*
 
@@ -11,14 +13,13 @@ ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /app
 
 COPY package.json bun.lock* ./
-RUN bun install --production
+RUN bun install --production && \
+    ln -sf cjs/mock node_modules/node-stdlib-browser/mock
 
 COPY src/ src/
 COPY tsconfig.json ./
 
-RUN bun build src/index.ts --target=bun --minify --outfile=dist/server.js
-
 EXPOSE 3100
 
-ENTRYPOINT ["bun", "dist/server.js"]
+ENTRYPOINT ["bun", "src/index.ts"]
 CMD ["/app/mcpx.json"]
