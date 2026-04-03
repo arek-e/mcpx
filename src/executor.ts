@@ -1,16 +1,6 @@
-import { NodeRuntime, createNodeDriver, createNodeRuntimeDriverFactory } from "secure-exec";
+import { createNodeDriver, NodeExecutionDriver, type BindingFunction } from "secure-exec";
 import { ok, err, type Result } from "neverthrow";
 import type { Backend } from "./backends.js";
-
-interface ToolCall {
-  name: string;
-  args: Record<string, unknown>;
-}
-
-interface IsolateOutput {
-  result: unknown;
-  calls: ToolCall[];
-}
 
 type ToolFunction = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -38,45 +28,21 @@ function buildToolRegistry(backends: Map<string, Backend>): Map<string, ToolFunc
   return registry;
 }
 
-/** Wrap user code with tool stubs that accumulate calls */
-function wrapCode(code: string, toolNames: string[]): string {
-  const stubs = toolNames
-    .map(
-      (n) =>
-        `const ${n} = (args) => { const i = __calls.length; __calls.push({ name: "${n}", args: args || {} }); return { __pending: i }; };`,
-    )
+/**
+ * Create convenience aliases so LLM-generated code can call `grafana_search(args)`
+ * instead of `SecureExec.bindings.callTool("grafana_search", args)`.
+ */
+function wrapCodeWithBindings(code: string, toolNames: string[]): string {
+  const aliases = toolNames
+    .map((n) => `const ${n} = (args) => SecureExec.bindings.callTool("${n}", args || {});`)
     .join("\n");
 
   return `
-const __calls = [];
-${stubs}
+${aliases}
 
 const __userResult = await (async () => { ${code} })();
-export default { result: __userResult, calls: __calls };
+export default __userResult;
 `;
-}
-
-/** Execute accumulated tool calls on the host and return results */
-async function executePendingCalls(
-  calls: ToolCall[],
-  registry: Map<string, ToolFunction>,
-): Promise<unknown[]> {
-  const results: unknown[] = [];
-
-  for (const call of calls) {
-    const fn = registry.get(call.name);
-    if (!fn) {
-      results.push({ error: `Unknown tool: ${call.name}` });
-      continue;
-    }
-    try {
-      results.push(await fn(call.args));
-    } catch (e) {
-      results.push({ error: (e as Error).message });
-    }
-  }
-
-  return results;
 }
 
 /** Execute LLM-generated code in a V8 isolate with access to backend MCP tools */
@@ -87,6 +53,22 @@ export async function executeCode(
 ): Promise<Result<unknown, ExecuteError>> {
   const registry = buildToolRegistry(backends);
 
+  // Single dispatcher binding — avoids the 64-leaf limit.
+  // All tools are called via callTool(name, args).
+  const callTool: BindingFunction = async (name: unknown, args: unknown) => {
+    const toolName = name as string;
+    const toolArgs = (args as Record<string, unknown>) ?? {};
+    const fn = registry.get(toolName);
+    if (!fn) {
+      return { error: `Unknown tool: ${toolName}` };
+    }
+    try {
+      return await fn(toolArgs);
+    } catch (e) {
+      return { error: (e as Error).message };
+    }
+  };
+
   const systemDriver = createNodeDriver({
     permissions: {
       fs: () => ({ allow: false }),
@@ -96,40 +78,33 @@ export async function executeCode(
     },
   });
 
-  const runtimeDriverFactory = createNodeRuntimeDriverFactory({});
-
-  const runtime = new NodeRuntime({
-    systemDriver,
-    runtimeDriverFactory,
+  // Use NodeExecutionDriver directly to access bindings support.
+  // The high-level NodeRuntime class doesn't expose bindings.
+  const driver = new NodeExecutionDriver({
+    system: systemDriver,
+    runtime: {
+      process: { cwd: "/root", env: {} },
+      os: { homedir: "/root", tmpdir: "/tmp" },
+    },
     memoryLimit: opts?.memoryLimit ?? 64,
     cpuTimeLimitMs: opts?.cpuTimeLimitMs ?? 10_000,
+    bindings: { callTool },
   });
 
   try {
-    const wrappedCode = wrapCode(code, [...registry.keys()]);
-    const runResult = await runtime.run(wrappedCode, "/entry.mjs");
+    const wrappedCode = wrapCodeWithBindings(code, [...registry.keys()]);
+    const runResult = await driver.run(wrappedCode, "/entry.mjs");
 
     if (runResult.code !== 0) {
       return err({ kind: "runtime", code: runResult.code });
     }
 
     const exports = runResult.exports as Record<string, unknown>;
-    const output = exports?.default as IsolateOutput | undefined;
-
-    if (!output) {
-      return ok(null);
-    }
-
-    if (output.calls?.length > 0) {
-      const results = await executePendingCalls(output.calls, registry);
-      return ok(results.length === 1 ? results[0] : results);
-    }
-
-    return ok(output.result);
+    return ok(exports?.default ?? null);
   } catch (e) {
     return err({ kind: "exception", message: (e as Error).message });
   } finally {
-    runtime.dispose();
+    driver.dispose();
   }
 }
 
