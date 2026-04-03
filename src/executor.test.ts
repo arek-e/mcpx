@@ -67,7 +67,13 @@ describe("executeCode", () => {
     const mockBackend: Backend = {
       name: "test",
       client: {
-        callTool: async ({ name, arguments: args }) => ({
+        callTool: async ({
+          name,
+          arguments: args,
+        }: {
+          name: string;
+          arguments?: Record<string, unknown>;
+        }) => ({
           content: [{ type: "text", text: `called ${name} with ${JSON.stringify(args)}` }],
         }),
         close: async () => {},
@@ -89,7 +95,13 @@ describe("executeCode", () => {
     const mockBackend: Backend = {
       name: "mock",
       client: {
-        callTool: async ({ name, arguments: args }) => {
+        callTool: async ({
+          name,
+          arguments: args,
+        }: {
+          name: string;
+          arguments?: Record<string, unknown>;
+        }) => {
           callCount++;
           if (name === "get_id") return { content: [{ type: "text", text: "42" }] };
           if (name === "get_details")
