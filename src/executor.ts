@@ -87,7 +87,7 @@ export async function executeCode(
       os: { homedir: "/root", tmpdir: "/tmp" },
     },
     memoryLimit: opts?.memoryLimit ?? 64,
-    cpuTimeLimitMs: opts?.cpuTimeLimitMs ?? 10_000,
+    cpuTimeLimitMs: opts?.cpuTimeLimitMs ?? 30_000,
     bindings: { callTool },
   });
 
