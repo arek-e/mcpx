@@ -89,7 +89,7 @@ describe("executeCode", () => {
     const backends = new Map([["test", mockBackend]]);
 
     const result = await executeCode(
-      'const r = await test_echo({ msg: "hello" }); return r.content[0].text;',
+      'const r = await test.echo({ msg: "hello" }); return r.content[0].text;',
       backends,
     );
     expect(result.isOk()).toBe(true);
@@ -126,9 +126,9 @@ describe("executeCode", () => {
     const backends = new Map([["mock", mockBackend]]);
 
     const result = await executeCode(
-      `const idResult = await mock_get_id({});
+      `const idResult = await mock.getId({});
        const id = idResult.content[0].text;
-       const details = await mock_get_details({ id });
+       const details = await mock.getDetails({ id });
        return details.content[0].text;`,
       backends,
     );

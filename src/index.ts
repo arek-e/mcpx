@@ -186,12 +186,8 @@ ${toolListing}`,
 Write an async function body. Available tool functions (call with await):
 ${typeDefs}
 
-Example (namespace style):
+Example:
   const result = await grafana.searchDashboards({ query: "pods" });
-  return result;
-
-Example (classic style):
-  const result = await grafana_search_dashboards({ query: "pods" });
   return result;`,
       {
         code: z.string().describe("JavaScript async function body to execute"),

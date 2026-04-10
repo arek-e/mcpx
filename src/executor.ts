@@ -82,12 +82,7 @@ const console = {
   debug: (...args) => __consoleLogs.push({ level: "debug", args }),
 };`;
 
-  // Flat aliases (backward compat)
-  const aliases = toolNames
-    .map((n) => `const ${n} = (args) => SecureExec.bindings.callTool("${n}", args || {});`)
-    .join("\n");
-
-  // Namespace proxies
+  // Namespace proxies — grafana.searchDashboards() style
   const namespaces: string[] = [];
   for (const [backendName, tools] of backendTools) {
     const methods = tools
@@ -102,7 +97,6 @@ const console = {
 
   return `
 ${consoleOverride}
-${aliases}
 ${namespaces.join("\n")}
 
 const __userResult = await (async () => { ${code} })();
