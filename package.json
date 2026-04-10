@@ -1,5 +1,5 @@
 {
-	"name": "mcpx-tools",
+	"name": "@teampitch/mcpx",
 	"version": "0.2.0",
 	"description": "Self-hosted MCP Code Mode gateway — aggregate multiple MCP servers behind 2 tools with V8 isolate execution",
 	"keywords": [
