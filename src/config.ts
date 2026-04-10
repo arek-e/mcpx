@@ -9,8 +9,14 @@ export interface BackendConfig {
   args?: string[];
   /** For http: URL of the remote MCP server */
   url?: string;
-  /** Environment variables (stdio) or headers (http) — supports ${VAR} interpolation from process.env */
+  /** Environment variables for stdio subprocess — supports ${VAR} interpolation from process.env */
   env?: Record<string, string>;
+  /** HTTP headers for http transport — supports ${VAR} interpolation */
+  headers?: Record<string, string>;
+  /** JWT roles allowed to access this backend */
+  allowedRoles?: string[];
+  /** JWT teams allowed to access this backend */
+  allowedTeams?: string[];
 }
 
 export interface McpxConfig {
@@ -18,6 +24,28 @@ export interface McpxConfig {
   port: number;
   /** Bearer token for authentication (optional) */
   authToken?: string;
+  /** Allow startup with 0 connected backends (default: false) */
+  failOpen?: boolean;
+  /** Interval in seconds to refresh tool lists from backends (0 = disabled) */
+  toolRefreshInterval?: number;
+  /** Auth configuration */
+  auth?: {
+    /** Simple bearer token */
+    bearer?: string;
+    /** JWT verification */
+    jwt?: {
+      /** HMAC symmetric secret */
+      secret?: string;
+      /** JWKS endpoint for asymmetric keys */
+      jwksUrl?: string;
+      /** Expected audience claim */
+      audience?: string;
+      /** Expected issuer claim */
+      issuer?: string;
+    };
+  };
+  /** Session TTL in minutes for HTTP mode (default: 30) */
+  sessionTtlMinutes?: number;
   /** Backend MCP servers */
   backends: Record<string, BackendConfig>;
 }
@@ -42,9 +70,32 @@ export function loadConfig(path: string): McpxConfig {
   // For production, use a proper YAML parser — keeping deps minimal for now
   const parsed = JSON.parse(raw);
 
+  // Normalize auth config (backward compat: authToken → auth.bearer)
+  const legacyAuthToken = parsed.authToken
+    ? interpolate(parsed.authToken)
+    : process.env.MCPX_AUTH_TOKEN;
+
+  const auth = parsed.auth
+    ? {
+        bearer: parsed.auth.bearer ? interpolate(parsed.auth.bearer) : undefined,
+        jwt: parsed.auth.jwt
+          ? {
+              secret: parsed.auth.jwt.secret ? interpolate(parsed.auth.jwt.secret) : undefined,
+              jwksUrl: parsed.auth.jwt.jwksUrl ? interpolate(parsed.auth.jwt.jwksUrl) : undefined,
+              audience: parsed.auth.jwt.audience,
+              issuer: parsed.auth.jwt.issuer,
+            }
+          : undefined,
+      }
+    : undefined;
+
   const config: McpxConfig = {
     port: parsed.port ?? 3100,
-    authToken: parsed.authToken ? interpolate(parsed.authToken) : process.env.MCPX_AUTH_TOKEN,
+    authToken: legacyAuthToken,
+    auth,
+    failOpen: parsed.failOpen ?? false,
+    toolRefreshInterval: parsed.toolRefreshInterval ?? 0,
+    sessionTtlMinutes: parsed.sessionTtlMinutes ?? 30,
     backends: {},
   };
 
@@ -52,6 +103,7 @@ export function loadConfig(path: string): McpxConfig {
     config.backends[name] = {
       ...backend,
       env: backend.env ? interpolateRecord(backend.env) : undefined,
+      headers: backend.headers ? interpolateRecord(backend.headers) : undefined,
     };
   }
 

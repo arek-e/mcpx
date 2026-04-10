@@ -4,13 +4,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadConfig } from "./config.js";
+
 import {
   connectBackends,
   generateTypeDefinitions,
   generateToolListing,
+  refreshAllTools,
   type Backend,
 } from "./backends.js";
+import { loadConfig } from "./config.js";
 import { executeCode } from "./executor.js";
 
 export async function startStdioServer(configPath: string): Promise<void> {
@@ -23,18 +25,35 @@ export async function startStdioServer(configPath: string): Promise<void> {
 
   const backends = await connectBackends(config.backends);
 
-  if (backends.size === 0) {
-    process.stderr.write("No backends connected. Exiting.\n");
+  if (backends.size === 0 && !config.failOpen) {
+    process.stderr.write("No backends connected. Use failOpen: true to start anyway.\n");
     process.exit(1);
   }
 
-  const typeDefs = generateTypeDefinitions(backends);
-  const toolListing = generateToolListing(backends);
+  if (backends.size === 0) {
+    process.stderr.write("Warning: no backends connected (failOpen mode)\n");
+  }
+
+  let typeDefs = generateTypeDefinitions(backends);
+  let toolListing = generateToolListing(backends);
   const totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
 
   process.stderr.write(
     `\n${totalTools} tools from ${backends.size} backends -> 2 Code Mode tools\n`,
   );
+
+  // Periodic tool refresh
+  if (config.toolRefreshInterval && config.toolRefreshInterval > 0) {
+    setInterval(async () => {
+      try {
+        await refreshAllTools(backends);
+        typeDefs = generateTypeDefinitions(backends);
+        toolListing = generateToolListing(backends);
+      } catch (err) {
+        process.stderr.write(`Tool refresh failed: ${(err as Error).message}\n`);
+      }
+    }, config.toolRefreshInterval * 1000);
+  }
 
   const server = createMcpServer(backends, typeDefs, toolListing);
   const transport = new StdioServerTransport();
@@ -59,7 +78,9 @@ function createMcpServer(
 
 Available tools:
 ${toolListing}`,
-    { query: z.string().describe("Search query — tool name, backend name, or keyword") },
+    {
+      query: z.string().describe("Search query — tool name, backend name, or keyword"),
+    },
     async ({ query }) => {
       const q = query.toLowerCase();
       const matched: string[] = [];

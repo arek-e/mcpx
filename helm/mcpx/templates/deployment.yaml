@@ -14,6 +14,9 @@ spec:
       labels:
         app: mcpx
     spec:
+      {{- if .Values.crdController.enabled }}
+      serviceAccountName: {{ .Release.Name }}-controller
+      {{- end }}
       containers:
         - name: mcpx
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -29,7 +32,9 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+              {{- if not .Values.crdController.enabled }}
               readOnly: true
+              {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:
@@ -44,11 +49,42 @@ spec:
               port: {{ .Values.service.port }}
             initialDelaySeconds: 5
             periodSeconds: 10
+        {{- if .Values.crdController.enabled }}
+        - name: crd-controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bun", "src/k8s-controller.ts"]
+          args:
+            - "--namespace"
+            - "{{ .Release.Namespace }}"
+            - "--output"
+            - "/config/mcpx.json"
+          {{- if .Values.existingSecret }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+        {{- end }}
       {{- if .Values.image.pullSecrets }}
       imagePullSecrets:
         {{- toYaml .Values.image.pullSecrets | nindent 8 }}
       {{- end }}
       volumes:
+        {{- if .Values.crdController.enabled }}
+        - name: config
+          emptyDir: {}
+        {{- else }}
         - name: config
           configMap:
             name: {{ .Release.Name }}-config
+        {{- end }}

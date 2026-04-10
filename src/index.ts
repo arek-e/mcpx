@@ -1,14 +1,24 @@
-import { Hono } from "hono";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { z } from "zod";
-import { loadConfig } from "./config.js";
-import { connectBackends, generateTypeDefinitions, generateToolListing } from "./backends.js";
-import { executeCode } from "./executor.js";
-import { startStdioServer } from "./stdio.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { Hono } from "hono";
+import { z } from "zod";
+
+import { createAuthVerifier, filterBackendsByClaims, type AuthClaims } from "./auth.js";
+import {
+  connectBackends,
+  generateTypeDefinitions,
+  generateToolListing,
+  refreshAllTools,
+  type Backend,
+} from "./backends.js";
+import { loadConfig } from "./config.js";
+import { executeCode } from "./executor.js";
+import { startStdioServer } from "./stdio.js";
+import { watchConfig } from "./watcher.js";
 
 // Resolve version from package.json at startup
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -64,22 +74,51 @@ try {
   process.exit(1);
 }
 
-if (backends.size === 0) {
+if (backends.size === 0 && !config.failOpen) {
   console.error(
-    "No backends connected. Check that your backend commands are installed and accessible.",
+    "No backends connected. Check that your backend commands are installed and accessible.\n  Use failOpen: true in config to start anyway.",
   );
   process.exit(1);
 }
 
-// Pre-generate type definitions and tool listing
-const typeDefs = generateTypeDefinitions(backends);
-const toolListing = generateToolListing(backends);
+if (backends.size === 0) {
+  console.warn("Warning: no backends connected (failOpen mode — server will start degraded)");
+}
 
-const totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
+// Pre-generate type definitions and tool listing (mutable for hot-reload + tool refresh)
+let typeDefs = generateTypeDefinitions(backends);
+let toolListing = generateToolListing(backends);
+
+let totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
 console.log(`\n${totalTools} tools from ${backends.size} backends → 2 Code Mode tools`);
 
+// Periodic tool refresh
+if (config.toolRefreshInterval && config.toolRefreshInterval > 0) {
+  setInterval(async () => {
+    try {
+      await refreshAllTools(backends);
+      typeDefs = generateTypeDefinitions(backends);
+      toolListing = generateToolListing(backends);
+      totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
+    } catch (err) {
+      console.error("Tool refresh failed:", (err as Error).message);
+    }
+  }, config.toolRefreshInterval * 1000);
+}
+
+// Hot-reload: watch config file for changes
+watchConfig(configPath, backends, (newConfig, diff) => {
+  config = newConfig;
+  typeDefs = generateTypeDefinitions(backends);
+  toolListing = generateToolListing(backends);
+  totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
+  console.log(
+    `Config reloaded: +${diff.added.length} -${diff.removed.length} ~${diff.changed.length} (${totalTools} tools)`,
+  );
+});
+
 // Create the MCP server with 2 Code Mode tools
-function createMcpServer(): McpServer {
+function createMcpServer(visibleBackends: Map<string, Backend>): McpServer {
   const server = new McpServer({
     name: "mcpx",
     version: VERSION,
@@ -91,12 +130,14 @@ function createMcpServer(): McpServer {
 
 Available tools:
 ${toolListing}`,
-    { query: z.string().describe("Search query — tool name, backend name, or keyword") },
+    {
+      query: z.string().describe("Search query — tool name, backend name, or keyword"),
+    },
     async ({ query }) => {
       const q = query.toLowerCase();
       const matched: string[] = [];
 
-      for (const [name, backend] of backends) {
+      for (const [name, backend] of visibleBackends) {
         for (const tool of backend.tools) {
           const fullName = `${name}_${tool.name}`;
           const desc = tool.description?.toLowerCase() ?? "";
@@ -118,7 +159,7 @@ ${toolListing}`,
           content: [
             {
               type: "text" as const,
-              text: `No tools found matching "${query}". Available backends: ${Array.from(backends.keys()).join(", ")}`,
+              text: `No tools found matching "${query}". Available backends: ${Array.from(visibleBackends.keys()).join(", ")}`,
             },
           ],
         };
@@ -147,7 +188,7 @@ Example:
   return result;`,
     { code: z.string().describe("JavaScript async function body to execute") },
     async ({ code }) => {
-      const result = await executeCode(code, backends);
+      const result = await executeCode(code, visibleBackends);
 
       if (result.isErr()) {
         const e = result.error;
@@ -189,7 +230,7 @@ app.get("/health", (c) => {
   }));
 
   return c.json({
-    status: "ok",
+    status: backends.size === 0 ? "degraded" : "ok",
     version: VERSION,
     uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
     backends: backendDetails,
@@ -197,26 +238,78 @@ app.get("/health", (c) => {
   });
 });
 
-// Auth middleware
-if (config.authToken) {
+// Auth middleware — JWT, bearer, or open
+const verifier = createAuthVerifier(config);
+if (verifier) {
   app.use("/mcp", async (c, next) => {
-    const auth = c.req.header("Authorization");
-    if (auth !== `Bearer ${config.authToken}`) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    const authHeader = c.req.header("Authorization");
+    const token = authHeader?.replace(/^Bearer\s+/i, "");
+    if (!token) return c.json({ error: "unauthorized" }, 401);
+
+    const result = await verifier(token);
+    if (result.isErr()) return c.json({ error: result.error }, 401);
+
+    // Store claims for per-backend filtering
+    c.set("claims" as never, result.value as never);
     await next();
   });
 }
 
-// MCP endpoint — Streamable HTTP
+// Session management for stateful MCP connections
+const sessions = new Map<
+  string,
+  {
+    server: McpServer;
+    transport: WebStandardStreamableHTTPServerTransport;
+    lastAccess: number;
+  }
+>();
+const sessionTtlMs = (config.sessionTtlMinutes ?? 30) * 60 * 1000;
+
+// Expire stale sessions every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (now - session.lastAccess > sessionTtlMs) {
+      sessions.delete(id);
+    }
+  }
+}, 60_000);
+
+// MCP endpoint — Streamable HTTP with session support
 app.all("/mcp", async (c) => {
-  const server = createMcpServer();
+  // Resolve visible backends based on auth claims
+  const claims = c.get("claims" as never) as AuthClaims | undefined;
+  const visibleBackends = claims
+    ? filterBackendsByClaims(backends, claims, config.backends)
+    : backends;
+
+  const sessionId = c.req.header("mcp-session-id");
+
+  // Reuse existing session
+  if (sessionId && sessions.has(sessionId)) {
+    const session = sessions.get(sessionId)!;
+    session.lastAccess = Date.now();
+    const response = await session.transport.handleRequest(c.req.raw);
+    return response;
+  }
+
+  // New session
+  const server = createMcpServer(visibleBackends);
   const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: undefined, // Stateless mode
+    sessionIdGenerator: () => crypto.randomUUID(),
   });
 
   await server.connect(transport);
+
+  // Store session after first response (which contains the session ID)
   const response = await transport.handleRequest(c.req.raw);
+
+  const newSessionId = response.headers.get("mcp-session-id");
+  if (newSessionId) {
+    sessions.set(newSessionId, { server, transport, lastAccess: Date.now() });
+  }
+
   return response;
 });
 

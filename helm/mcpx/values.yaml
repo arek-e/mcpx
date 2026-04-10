@@ -34,3 +34,7 @@ config:
 # Secret environment variables (API keys, tokens)
 # Reference an existing secret with envFrom
 existingSecret: ''
+
+# CRD controller — watches McpxBackend resources and generates mcpx.json
+crdController:
+  enabled: false

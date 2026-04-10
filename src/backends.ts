@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
 import type { BackendConfig } from "./config.js";
 
 export interface ToolInfo {
@@ -38,6 +40,28 @@ async function connectStdio(name: string, config: BackendConfig): Promise<Backen
   return { name, client, tools: toolInfos };
 }
 
+/** Connect to a backend MCP server via HTTP (Streamable HTTP) */
+async function connectHttp(name: string, config: BackendConfig): Promise<Backend> {
+  if (!config.url) throw new Error(`Backend "${name}" missing url`);
+
+  const transport = new StreamableHTTPClientTransport(new URL(config.url), {
+    requestInit: config.headers ? { headers: config.headers } : undefined,
+  });
+
+  const client = new Client({ name: `mcpx-${name}`, version: "0.1.0" });
+  await client.connect(transport);
+
+  const { tools } = await client.listTools();
+  const toolInfos: ToolInfo[] = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema as Record<string, unknown>,
+  }));
+
+  console.log(`  ${name}: ${toolInfos.length} tools connected (http)`);
+  return { name, client, tools: toolInfos };
+}
+
 /** Connect to all configured backends */
 export async function connectBackends(
   configs: Record<string, BackendConfig>,
@@ -50,8 +74,8 @@ export async function connectBackends(
         const backend = await connectStdio(name, config);
         backends.set(name, backend);
       } else if (config.transport === "http") {
-        // TODO: implement HTTP/SSE client transport
-        console.log(`  ${name}: http transport not yet implemented, skipping`);
+        const backend = await connectHttp(name, config);
+        backends.set(name, backend);
       }
     } catch (err) {
       console.error(`  ${name}: failed to connect —`, (err as Error).message);
@@ -59,6 +83,27 @@ export async function connectBackends(
   }
 
   return backends;
+}
+
+/** Refresh tool lists from a single backend */
+async function refreshBackendTools(backend: Backend): Promise<void> {
+  const { tools } = await backend.client.listTools();
+  backend.tools = tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema as Record<string, unknown>,
+  }));
+}
+
+/** Refresh tool lists from all backends */
+export async function refreshAllTools(backends: Map<string, Backend>): Promise<void> {
+  for (const [name, backend] of backends) {
+    try {
+      await refreshBackendTools(backend);
+    } catch (err) {
+      console.error(`  ${name}: tool refresh failed —`, (err as Error).message);
+    }
+  }
 }
 
 /** Generate TypeScript type definitions from all backend tools for the LLM */
