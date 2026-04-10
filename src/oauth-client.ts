@@ -15,6 +15,13 @@ interface OAuthMetadata {
   response_types_supported?: string[];
   grant_types_supported?: string[];
   code_challenge_methods_supported?: string[];
+  scopes_supported?: string[];
+}
+
+interface ResourceMetadata {
+  resource: string;
+  scopes_supported?: string[];
+  authorization_servers?: string[];
 }
 
 interface StoredToken {
@@ -43,7 +50,21 @@ async function generatePkce(): Promise<PkceChallenge> {
   return { verifier, challenge };
 }
 
-/** Discover OAuth metadata from an MCP server */
+/** Discover resource metadata to find required scopes (MCP OAuth spec) */
+async function discoverResourceMetadata(serverUrl: string): Promise<ResourceMetadata | null> {
+  const base = new URL(serverUrl);
+  const metadataUrl = `${base.origin}/.well-known/oauth-protected-resource`;
+
+  try {
+    const res = await fetch(metadataUrl);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+/** Discover OAuth authorization server metadata */
 async function discoverMetadata(serverUrl: string): Promise<OAuthMetadata> {
   const base = new URL(serverUrl);
   const metadataUrl = `${base.origin}/.well-known/oauth-authorization-server`;
@@ -65,18 +86,22 @@ async function discoverMetadata(serverUrl: string): Promise<OAuthMetadata> {
 async function registerClient(
   metadata: OAuthMetadata,
   redirectUri: string,
+  scopes?: string,
 ): Promise<{ clientId: string; clientSecret?: string }> {
   if (!metadata.registration_endpoint) {
     throw new Error("Server doesn't support dynamic client registration");
   }
 
+  const regBody: Record<string, unknown> = {
+    client_name: "mcpx",
+    redirect_uris: [redirectUri],
+  };
+  if (scopes) regBody.scope = scopes;
+
   const res = await fetch(metadata.registration_endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_name: "mcpx",
-      redirect_uris: [redirectUri],
-    }),
+    body: JSON.stringify(regBody),
   });
 
   if (!res.ok) {
@@ -277,10 +302,18 @@ export async function getAccessToken(
 
   // Full OAuth flow
   console.log(`  ${backendName}: discovering OAuth metadata...`);
+
+  // Discover required scopes from resource metadata (MCP OAuth spec)
+  const resourceMeta = await discoverResourceMetadata(serverUrl);
+  const scopes = resourceMeta?.scopes_supported?.join(" ") ?? "";
+  if (scopes) {
+    console.log(`  ${backendName}: requesting scopes: ${scopes}`);
+  }
+
   const metadata = await discoverMetadata(serverUrl);
 
   console.log(`  ${backendName}: registering OAuth client...`);
-  const { clientId, clientSecret } = await registerClient(metadata, redirectUri);
+  const { clientId, clientSecret } = await registerClient(metadata, redirectUri, scopes);
 
   const pkce = await generatePkce();
   const state = crypto.randomUUID();
@@ -292,6 +325,9 @@ export async function getAccessToken(
   authUrl.searchParams.set("code_challenge", pkce.challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
   authUrl.searchParams.set("state", state);
+  if (scopes) {
+    authUrl.searchParams.set("scope", scopes);
+  }
 
   // Start callback server and prompt user
   console.log(`\n  ${backendName}: authorize mcpx at:\n`);
