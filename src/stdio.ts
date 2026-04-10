@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 // Entrypoint for stdio mode — Claude Code runs this directly as a subprocess
 // Usage: mcpx stdio mcpx.json
 // Or: bunx mcpx stdio mcpx.json
@@ -23,7 +25,8 @@ export async function startStdioServer(configPath: string): Promise<void> {
   process.stderr.write(`  config: ${configPath}\n`);
   process.stderr.write(`  backends: ${Object.keys(config.backends).join(", ")}\n`);
 
-  const backends = await connectBackends(config.backends);
+  const tokensDir = join(configPath.replace(/[^/]+$/, ""), ".mcpx", "tokens");
+  const backends = await connectBackends(config.backends, { tokensDir });
 
   if (backends.size === 0 && !config.failOpen) {
     process.stderr.write("No backends connected. Use failOpen: true to start anyway.\n");

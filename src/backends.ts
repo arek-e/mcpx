@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import type { BackendConfig } from "./config.js";
+import { getAccessToken } from "./oauth-client.js";
 import { createOpenApiBackend } from "./openapi.js";
 
 export interface ToolInfo {
@@ -42,11 +43,23 @@ async function connectStdio(name: string, config: BackendConfig): Promise<Backen
 }
 
 /** Connect to a backend MCP server via HTTP (Streamable HTTP) */
-async function connectHttp(name: string, config: BackendConfig): Promise<Backend> {
+async function connectHttp(
+  name: string,
+  config: BackendConfig,
+  tokensDir?: string,
+): Promise<Backend> {
   if (!config.url) throw new Error(`Backend "${name}" missing url`);
 
+  // Build headers — static headers + OAuth token if configured
+  const headers: Record<string, string> = { ...config.headers };
+
+  if (config.oauth && tokensDir) {
+    const token = await getAccessToken(name, config.url, tokensDir, config.oauth);
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-    requestInit: config.headers ? { headers: config.headers } : undefined,
+    requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
   });
 
   const client = new Client({ name: `mcpx-${name}`, version: "0.1.0" });
@@ -66,6 +79,7 @@ async function connectHttp(name: string, config: BackendConfig): Promise<Backend
 /** Connect to all configured backends */
 export async function connectBackends(
   configs: Record<string, BackendConfig>,
+  opts?: { tokensDir?: string },
 ): Promise<Map<string, Backend>> {
   const backends = new Map<string, Backend>();
 
@@ -75,7 +89,7 @@ export async function connectBackends(
         const backend = await connectStdio(name, config);
         backends.set(name, backend);
       } else if (config.transport === "http") {
-        const backend = await connectHttp(name, config);
+        const backend = await connectHttp(name, config, opts?.tokensDir);
         backends.set(name, backend);
       } else if (config.transport === "openapi") {
         const backend = await createOpenApiBackend(name, config);

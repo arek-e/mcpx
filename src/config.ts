@@ -17,6 +17,13 @@ export interface BackendConfig {
   env?: Record<string, string>;
   /** HTTP headers for http transport — supports ${VAR} interpolation */
   headers?: Record<string, string>;
+  /** OAuth client config for HTTP backends (MCP OAuth flow) */
+  oauth?: {
+    /** Callback port for local OAuth redirect (default: 9876) */
+    callbackPort?: number;
+    /** Custom redirect URI (default: http://localhost:{callbackPort}/oauth/callback) */
+    redirectUri?: string;
+  };
   /** JWT roles allowed to access this backend */
   allowedRoles?: string[];
   /** JWT teams allowed to access this backend */

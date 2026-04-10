@@ -79,7 +79,8 @@ if (command !== "stdio") {
   console.log("\nConnecting to backends:");
   let backends: Map<string, import("./backends.js").Backend>;
   try {
-    backends = await connectBackends(config.backends);
+    const tokensDir = join(configPath.replace(/[^/]+$/, ""), ".mcpx", "tokens");
+    backends = await connectBackends(config.backends, { tokensDir });
   } catch (err) {
     console.error(`Failed to connect backends: ${(err as Error).message}`);
     process.exit(1);
