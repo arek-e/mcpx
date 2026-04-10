@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import type { BackendConfig } from "./config.js";
+import { createOpenApiBackend } from "./openapi.js";
 
 export interface ToolInfo {
   name: string;
@@ -75,6 +76,9 @@ export async function connectBackends(
         backends.set(name, backend);
       } else if (config.transport === "http") {
         const backend = await connectHttp(name, config);
+        backends.set(name, backend);
+      } else if (config.transport === "openapi") {
+        const backend = await createOpenApiBackend(name, config);
         backends.set(name, backend);
       }
     } catch (err) {

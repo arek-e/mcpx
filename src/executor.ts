@@ -1,13 +1,36 @@
-import { createNodeDriver, NodeExecutionDriver, type BindingFunction } from "secure-exec";
 import { ok, err, type Result } from "neverthrow";
+import { createNodeDriver, NodeExecutionDriver, type BindingFunction } from "secure-exec";
+
+import { validateSyntax } from "./ast.js";
 import type { Backend } from "./backends.js";
 
 type ToolFunction = (args: Record<string, unknown>) => Promise<unknown>;
 
+export interface LogEntry {
+  level: "log" | "warn" | "error" | "info" | "debug";
+  args: unknown[];
+}
+
+export interface ExecuteResult {
+  value: unknown;
+  logs: LogEntry[];
+}
+
 export type ExecuteError =
   | { kind: "runtime"; code: number }
-  | { kind: "parse"; message: string }
+  | {
+      kind: "parse";
+      message: string;
+      line?: number;
+      column?: number;
+      snippet?: string;
+    }
   | { kind: "exception"; message: string };
+
+/** Convert snake_case to camelCase */
+export function snakeToCamel(name: string): string {
+  return name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
 
 /** Build a map of prefixed tool names → backend tool call functions */
 function buildToolRegistry(backends: Map<string, Backend>): Map<string, ToolFunction> {
@@ -28,20 +51,62 @@ function buildToolRegistry(backends: Map<string, Backend>): Map<string, ToolFunc
   return registry;
 }
 
+/** Build a map of backend name → tool names (for namespace generation) */
+function buildBackendToolMap(backends: Map<string, Backend>): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const [name, backend] of backends) {
+    map.set(
+      name,
+      backend.tools.map((t) => t.name),
+    );
+  }
+  return map;
+}
+
 /**
- * Create convenience aliases so LLM-generated code can call `grafana_search(args)`
- * instead of `SecureExec.bindings.callTool("grafana_search", args)`.
+ * Generate code bindings: flat aliases + namespace proxies + console capture.
  */
-function wrapCodeWithBindings(code: string, toolNames: string[]): string {
+function wrapCodeWithBindings(
+  code: string,
+  toolNames: string[],
+  backendTools: Map<string, string[]>,
+): string {
+  // Console capture
+  const consoleOverride = `
+const __consoleLogs = [];
+const console = {
+  log: (...args) => __consoleLogs.push({ level: "log", args }),
+  warn: (...args) => __consoleLogs.push({ level: "warn", args }),
+  error: (...args) => __consoleLogs.push({ level: "error", args }),
+  info: (...args) => __consoleLogs.push({ level: "info", args }),
+  debug: (...args) => __consoleLogs.push({ level: "debug", args }),
+};`;
+
+  // Flat aliases (backward compat)
   const aliases = toolNames
     .map((n) => `const ${n} = (args) => SecureExec.bindings.callTool("${n}", args || {});`)
     .join("\n");
 
+  // Namespace proxies
+  const namespaces: string[] = [];
+  for (const [backendName, tools] of backendTools) {
+    const methods = tools
+      .map((toolName) => {
+        const camelName = snakeToCamel(sanitizeName(toolName));
+        const prefixed = `${backendName}_${sanitizeName(toolName)}`;
+        return `  ${camelName}: (args) => SecureExec.bindings.callTool("${prefixed}", args || {})`;
+      })
+      .join(",\n");
+    namespaces.push(`const ${backendName} = {\n${methods}\n};`);
+  }
+
   return `
+${consoleOverride}
 ${aliases}
+${namespaces.join("\n")}
 
 const __userResult = await (async () => { ${code} })();
-export default __userResult;
+export default { value: __userResult, logs: __consoleLogs };
 `;
 }
 
@@ -50,11 +115,10 @@ export async function executeCode(
   code: string,
   backends: Map<string, Backend>,
   opts?: { memoryLimit?: number; cpuTimeLimitMs?: number },
-): Promise<Result<unknown, ExecuteError>> {
+): Promise<Result<ExecuteResult, ExecuteError>> {
   const registry = buildToolRegistry(backends);
+  const backendTools = buildBackendToolMap(backends);
 
-  // Single dispatcher binding — avoids the 64-leaf limit.
-  // All tools are called via callTool(name, args).
   const callTool: BindingFunction = async (name: unknown, args: unknown) => {
     const toolName = name as string;
     const toolArgs = (args as Record<string, unknown>) ?? {};
@@ -69,6 +133,20 @@ export async function executeCode(
     }
   };
 
+  const wrappedCode = wrapCodeWithBindings(code, [...registry.keys()], backendTools);
+
+  // AST validation — catch syntax errors with better messages before V8 execution
+  const syntaxError = validateSyntax(wrappedCode);
+  if (syntaxError) {
+    return err({
+      kind: "parse",
+      message: syntaxError.message,
+      line: syntaxError.line,
+      column: syntaxError.column,
+      snippet: syntaxError.snippet,
+    });
+  }
+
   const systemDriver = createNodeDriver({
     permissions: {
       fs: () => ({ allow: false }),
@@ -78,8 +156,6 @@ export async function executeCode(
     },
   });
 
-  // Use NodeExecutionDriver directly to access bindings support.
-  // The high-level NodeRuntime class doesn't expose bindings.
   const driver = new NodeExecutionDriver({
     system: systemDriver,
     runtime: {
@@ -92,7 +168,6 @@ export async function executeCode(
   });
 
   try {
-    const wrappedCode = wrapCodeWithBindings(code, [...registry.keys()]);
     const runResult = await driver.run(wrappedCode, "/entry.mjs");
 
     if (runResult.code !== 0) {
@@ -100,7 +175,14 @@ export async function executeCode(
     }
 
     const exports = runResult.exports as Record<string, unknown>;
-    return ok(exports?.default ?? null);
+    const result = exports?.default as {
+      value: unknown;
+      logs: LogEntry[];
+    } | null;
+    return ok({
+      value: result?.value ?? null,
+      logs: result?.logs ?? [],
+    });
   } catch (e) {
     return err({ kind: "exception", message: (e as Error).message });
   } finally {

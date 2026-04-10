@@ -17,6 +17,7 @@ import {
 } from "./backends.js";
 import { loadConfig } from "./config.js";
 import { executeCode } from "./executor.js";
+import { createOAuthRoutes } from "./oauth.js";
 import { startStdioServer } from "./stdio.js";
 import { watchConfig } from "./watcher.js";
 
@@ -183,7 +184,11 @@ ${toolListing}`,
 Write an async function body. Available tool functions (call with await):
 ${typeDefs}
 
-Example:
+Example (namespace style):
+  const result = await grafana.searchDashboards({ query: "pods" });
+  return result;
+
+Example (classic style):
   const result = await grafana_search_dashboards({ query: "pods" });
   return result;`,
     { code: z.string().describe("JavaScript async function body to execute") },
@@ -192,21 +197,28 @@ Example:
 
       if (result.isErr()) {
         const e = result.error;
-        const msg = e.kind === "runtime" ? `Execution failed with code ${e.code}` : e.message;
+        let msg = e.kind === "runtime" ? `Execution failed with code ${e.code}` : e.message;
+        if (e.kind === "parse" && e.snippet) {
+          msg += `\n\n${e.snippet}`;
+        }
         return {
           content: [{ type: "text" as const, text: `Error: ${msg}` }],
           isError: true,
         };
       }
 
+      const val = result.value.value;
+      const text = typeof val === "string" ? val : JSON.stringify(val, null, 2);
+      const logText =
+        result.value.logs.length > 0
+          ? `\n\n--- Console Output ---\n${result.value.logs.map((l) => `[${l.level}] ${l.args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}`).join("\n")}`
+          : "";
+
       return {
         content: [
           {
             type: "text" as const,
-            text:
-              typeof result.value === "string"
-                ? result.value
-                : JSON.stringify(result.value, null, 2),
+            text: text + logText,
           },
         ],
       };
@@ -238,13 +250,26 @@ app.get("/health", (c) => {
   });
 });
 
-// Auth middleware — JWT, bearer, or open
+// Mount OAuth routes if configured
+if (config.auth?.oauth) {
+  createOAuthRoutes(config.auth.oauth, app);
+}
+
+// Auth middleware — JWT, bearer, OAuth, or open
 const verifier = createAuthVerifier(config);
 if (verifier) {
   app.use("/mcp", async (c, next) => {
     const authHeader = c.req.header("Authorization");
     const token = authHeader?.replace(/^Bearer\s+/i, "");
-    if (!token) return c.json({ error: "unauthorized" }, 401);
+    if (!token) {
+      // Per MCP OAuth spec — include metadata URL in 401 response
+      const headers: Record<string, string> = {};
+      if (config.auth?.oauth) {
+        headers["WWW-Authenticate"] =
+          `Bearer resource_metadata="/.well-known/oauth-authorization-server"`;
+      }
+      return c.json({ error: "unauthorized" }, { status: 401, headers });
+    }
 
     const result = await verifier(token);
     if (result.isErr()) return c.json({ error: result.error }, 401);

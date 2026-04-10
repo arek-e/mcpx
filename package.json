@@ -38,6 +38,7 @@
 	},
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.12.1",
+		"acorn": "^8.16.0",
 		"hono": "^4.7.10",
 		"jose": "^6.2.2",
 		"neverthrow": "^8.2.0",

@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { executeCode, sanitizeName } from "./executor.js";
+
 import type { Backend } from "./backends.js";
+import { executeCode, sanitizeName } from "./executor.js";
 
 const emptyBackends = new Map<string, Backend>();
 
@@ -8,25 +9,25 @@ describe("executeCode", () => {
   test("returns simple value with no tool calls", async () => {
     const result = await executeCode("return 42;", emptyBackends);
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toBe(42);
+    if (result.isOk()) expect(result.value.value).toBe(42);
   });
 
   test("returns string value", async () => {
     const result = await executeCode('return "hello world";', emptyBackends);
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toBe("hello world");
+    if (result.isOk()) expect(result.value.value).toBe("hello world");
   });
 
   test("returns object value", async () => {
     const result = await executeCode('return { key: "value", num: 1 };', emptyBackends);
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toEqual({ key: "value", num: 1 });
+    if (result.isOk()) expect(result.value.value).toEqual({ key: "value", num: 1 });
   });
 
   test("returns array value", async () => {
     const result = await executeCode("return [1, 2, 3];", emptyBackends);
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toEqual([1, 2, 3]);
+    if (result.isOk()) expect(result.value.value).toEqual([1, 2, 3]);
   });
 
   test("handles async computation", async () => {
@@ -35,13 +36,13 @@ describe("executeCode", () => {
       emptyBackends,
     );
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toBe(20);
+    if (result.isOk()) expect(result.value.value).toBe(20);
   });
 
   test("returns null for code with no return", async () => {
     const result = await executeCode("const x = 1;", emptyBackends);
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value == null).toBe(true);
+    if (result.isOk()) expect(result.value.value == null).toBe(true);
   });
 
   test("handles syntax error gracefully", async () => {
@@ -60,7 +61,7 @@ describe("executeCode", () => {
       emptyBackends,
     );
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toBe("no-tools");
+    if (result.isOk()) expect(result.value.value).toBe("no-tools");
   });
 
   test("tool bindings return real values via await", async () => {
@@ -74,7 +75,12 @@ describe("executeCode", () => {
           name: string;
           arguments?: Record<string, unknown>;
         }) => ({
-          content: [{ type: "text", text: `called ${name} with ${JSON.stringify(args)}` }],
+          content: [
+            {
+              type: "text",
+              text: `called ${name} with ${JSON.stringify(args)}`,
+            },
+          ],
         }),
         close: async () => {},
       } as any,
@@ -87,7 +93,7 @@ describe("executeCode", () => {
       backends,
     );
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toBe('called echo with {"msg":"hello"}');
+    if (result.isOk()) expect(result.value.value).toBe('called echo with {"msg":"hello"}');
   });
 
   test("multi-step tool calls use results from previous calls", async () => {
@@ -105,7 +111,9 @@ describe("executeCode", () => {
           callCount++;
           if (name === "get_id") return { content: [{ type: "text", text: "42" }] };
           if (name === "get_details")
-            return { content: [{ type: "text", text: `details for ${(args as any).id}` }] };
+            return {
+              content: [{ type: "text", text: `details for ${(args as any).id}` }],
+            };
           return { content: [{ type: "text", text: "unknown" }] };
         },
         close: async () => {},
@@ -125,7 +133,7 @@ describe("executeCode", () => {
       backends,
     );
     expect(result.isOk()).toBe(true);
-    if (result.isOk()) expect(result.value).toBe("details for 42");
+    if (result.isOk()) expect(result.value.value).toBe("details for 42");
     expect(callCount).toBe(2);
   });
 

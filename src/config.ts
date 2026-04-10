@@ -1,14 +1,18 @@
 import { readFileSync } from "node:fs";
 
 export interface BackendConfig {
-  /** Transport: stdio spawns a subprocess, http connects to a remote MCP server */
-  transport: "stdio" | "http";
+  /** Transport: stdio spawns a subprocess, http connects to a remote MCP server, openapi proxies a REST API */
+  transport: "stdio" | "http" | "openapi";
   /** For stdio: command to run */
   command?: string;
   /** For stdio: arguments */
   args?: string[];
-  /** For http: URL of the remote MCP server */
+  /** For http: MCP server URL. For openapi: spec URL. */
   url?: string;
+  /** For openapi: spec URL (alternative to url) */
+  specUrl?: string;
+  /** For openapi: base URL for API calls (defaults to spec servers[0]) */
+  baseUrl?: string;
   /** Environment variables for stdio subprocess — supports ${VAR} interpolation from process.env */
   env?: Record<string, string>;
   /** HTTP headers for http transport — supports ${VAR} interpolation */
@@ -42,6 +46,17 @@ export interface McpxConfig {
       audience?: string;
       /** Expected issuer claim */
       issuer?: string;
+    };
+    /** MCP OAuth 2.0 server */
+    oauth?: {
+      /** Issuer URL (e.g. https://mcp.yourcompany.com) */
+      issuer: string;
+      /** Allowed clients with redirect URI patterns */
+      clients: Array<{ name: string; redirectUri: string }>;
+      /** Secret for signing access tokens */
+      tokenSecret: string;
+      /** Access token TTL in minutes */
+      tokenTtlMinutes: number;
     };
   };
   /** Session TTL in minutes for HTTP mode (default: 30) */
@@ -84,6 +99,14 @@ export function loadConfig(path: string): McpxConfig {
               jwksUrl: parsed.auth.jwt.jwksUrl ? interpolate(parsed.auth.jwt.jwksUrl) : undefined,
               audience: parsed.auth.jwt.audience,
               issuer: parsed.auth.jwt.issuer,
+            }
+          : undefined,
+        oauth: parsed.auth?.oauth
+          ? {
+              issuer: parsed.auth.oauth.issuer,
+              clients: parsed.auth.oauth.clients ?? [],
+              tokenSecret: interpolate(parsed.auth.oauth.tokenSecret ?? ""),
+              tokenTtlMinutes: parsed.auth.oauth.tokenTtlMinutes ?? 60,
             }
           : undefined,
       }
