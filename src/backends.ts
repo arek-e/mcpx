@@ -110,33 +110,66 @@ export async function refreshAllTools(backends: Map<string, Backend>): Promise<v
   }
 }
 
+/** Map a JSON Schema type to a TypeScript type string */
+function schemaTypeToTs(schema: Record<string, unknown>): string {
+  const type = schema.type as string | undefined;
+  if (schema.enum) return (schema.enum as unknown[]).map((v) => JSON.stringify(v)).join(" | ");
+  if (type === "array") {
+    const items = schema.items as Record<string, unknown> | undefined;
+    return items ? `${schemaTypeToTs(items)}[]` : "any[]";
+  }
+  if (type === "object") {
+    const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
+    if (!props) return "Record<string, unknown>";
+    const fields = Object.entries(props)
+      .map(([k, v]) => `${k}: ${schemaTypeToTs(v)}`)
+      .join("; ");
+    return `{ ${fields} }`;
+  }
+  if (type === "string") return "string";
+  if (type === "number" || type === "integer") return "number";
+  if (type === "boolean") return "boolean";
+  return "any";
+}
+
 /** Generate TypeScript type definitions from all backend tools for the LLM */
 export function generateTypeDefinitions(backends: Map<string, Backend>): string {
   const lines: string[] = [
-    "// Available MCP tool functions — call these in your execute code",
-    "// Each function returns a Promise<{ content: Array<{ type: string, text: string }> }>",
+    "// Available tool functions — call via namespace: await backend.toolName(args)",
     "",
   ];
 
   for (const [name, backend] of backends) {
     lines.push(`// === ${name} ===`);
     for (const tool of backend.tools) {
-      const params = tool.inputSchema?.properties
-        ? Object.entries(
-            tool.inputSchema.properties as Record<string, { type?: string; description?: string }>,
-          )
-            .map(([k, v]) => {
-              const required = (tool.inputSchema.required as string[] | undefined)?.includes(k);
-              return `${k}${required ? "" : "?"}: ${v.type === "array" ? "any[]" : (v.type ?? "any")}`;
-            })
-            .join(", ")
-        : "";
-      const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : "";
-      lines.push(
-        `declare function ${name}_${sanitizeName(tool.name)}(args: { ${params} }): Promise<any>;${desc}`,
-      );
+      const props = tool.inputSchema?.properties as
+        | Record<string, Record<string, unknown>>
+        | undefined;
+      const required = (tool.inputSchema?.required as string[]) ?? [];
+
+      if (props && Object.keys(props).length > 0) {
+        // Generate interface
+        const ifaceName = `${name}_${sanitizeName(tool.name)}_Input`;
+        lines.push(`interface ${ifaceName} {`);
+        for (const [k, v] of Object.entries(props)) {
+          const opt = required.includes(k) ? "" : "?";
+          const desc = v.description ? ` // ${(v.description as string).slice(0, 60)}` : "";
+          lines.push(`  ${k}${opt}: ${schemaTypeToTs(v)};${desc}`);
+        }
+        lines.push("}");
+
+        const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : "";
+        lines.push(
+          `declare function ${name}_${sanitizeName(tool.name)}(args: ${ifaceName}): Promise<any>;${desc}`,
+        );
+      } else {
+        const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : "";
+        lines.push(
+          `declare function ${name}_${sanitizeName(tool.name)}(args?: {}): Promise<any>;${desc}`,
+        );
+      }
+      lines.push("");
     }
-    lines.push("");
   }
 
   return lines.join("\n");

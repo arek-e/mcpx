@@ -3,6 +3,7 @@ import { createNodeDriver, NodeExecutionDriver, type BindingFunction } from "sec
 
 import { validateSyntax } from "./ast.js";
 import type { Backend } from "./backends.js";
+import type { Skill } from "./skills.js";
 
 type ToolFunction = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -11,9 +12,28 @@ export interface LogEntry {
   args: unknown[];
 }
 
+export interface ExecutionEvent {
+  type:
+    | "tool_call"
+    | "tool_result"
+    | "tool_error"
+    | "console"
+    | "execution_start"
+    | "execution_end";
+  timestamp: number;
+  tool?: string;
+  args?: unknown;
+  result?: unknown;
+  error?: string;
+  durationMs?: number;
+  level?: string;
+  message?: string;
+}
+
 export interface ExecuteResult {
   value: unknown;
   logs: LogEntry[];
+  events: ExecutionEvent[];
 }
 
 export type ExecuteError =
@@ -33,26 +53,98 @@ export function snakeToCamel(name: string): string {
 }
 
 /** Build a map of prefixed tool names → backend tool call functions */
-function buildToolRegistry(backends: Map<string, Backend>): Map<string, ToolFunction> {
+function buildToolRegistry(
+  backends: Map<string, Backend>,
+  skills: Map<string, Skill>,
+  events: ExecutionEvent[],
+): Map<string, ToolFunction> {
   const registry = new Map<string, ToolFunction>();
 
+  // Backend tools
   for (const [name, backend] of backends) {
     for (const tool of backend.tools) {
       const prefixed = `${name}_${sanitizeName(tool.name)}`;
       registry.set(prefixed, async (args) => {
-        return backend.client.callTool({
-          name: tool.name,
-          arguments: args,
+        const start = Date.now();
+        events.push({
+          type: "tool_call",
+          timestamp: start,
+          tool: prefixed,
+          args,
         });
+        try {
+          const result = await backend.client.callTool({
+            name: tool.name,
+            arguments: args,
+          });
+          events.push({
+            type: "tool_result",
+            timestamp: Date.now(),
+            tool: prefixed,
+            result,
+            durationMs: Date.now() - start,
+          });
+          return result;
+        } catch (e) {
+          const msg = (e as Error).message;
+          events.push({
+            type: "tool_error",
+            timestamp: Date.now(),
+            tool: prefixed,
+            error: msg,
+            durationMs: Date.now() - start,
+          });
+          return { error: msg };
+        }
       });
     }
+  }
+
+  // Skill tools — execute saved code in the same sandbox context
+  for (const [, skill] of skills) {
+    const prefixed = `skill_${sanitizeName(skill.name)}`;
+    registry.set(prefixed, async (args) => {
+      const start = Date.now();
+      events.push({
+        type: "tool_call",
+        timestamp: start,
+        tool: prefixed,
+        args,
+      });
+      try {
+        // Skills run as inline functions — they have access to the same tool bindings
+        const fn = new Function("args", `return (async () => { ${skill.code} })()`);
+        const result = await fn(args);
+        events.push({
+          type: "tool_result",
+          timestamp: Date.now(),
+          tool: prefixed,
+          result,
+          durationMs: Date.now() - start,
+        });
+        return result;
+      } catch (e) {
+        const msg = (e as Error).message;
+        events.push({
+          type: "tool_error",
+          timestamp: Date.now(),
+          tool: prefixed,
+          error: msg,
+          durationMs: Date.now() - start,
+        });
+        return { error: msg };
+      }
+    });
   }
 
   return registry;
 }
 
 /** Build a map of backend name → tool names (for namespace generation) */
-function buildBackendToolMap(backends: Map<string, Backend>): Map<string, string[]> {
+function buildBackendToolMap(
+  backends: Map<string, Backend>,
+  skills: Map<string, Skill>,
+): Map<string, string[]> {
   const map = new Map<string, string[]>();
   for (const [name, backend] of backends) {
     map.set(
@@ -60,18 +152,20 @@ function buildBackendToolMap(backends: Map<string, Backend>): Map<string, string
       backend.tools.map((t) => t.name),
     );
   }
+
+  // Skills get their own namespace
+  if (skills.size > 0) {
+    map.set(
+      "skill",
+      Array.from(skills.values()).map((s) => s.name),
+    );
+  }
+
   return map;
 }
 
-/**
- * Generate code bindings: flat aliases + namespace proxies + console capture.
- */
-function wrapCodeWithBindings(
-  code: string,
-  toolNames: string[],
-  backendTools: Map<string, string[]>,
-): string {
-  // Console capture
+/** Generate namespace proxy code for the sandbox */
+function wrapCodeWithBindings(code: string, backendTools: Map<string, string[]>): string {
   const consoleOverride = `
 const __consoleLogs = [];
 const console = {
@@ -82,7 +176,6 @@ const console = {
   debug: (...args) => __consoleLogs.push({ level: "debug", args }),
 };`;
 
-  // Namespace proxies — grafana.searchDashboards() style
   const namespaces: string[] = [];
   for (const [backendName, tools] of backendTools) {
     const methods = tools
@@ -108,10 +201,18 @@ export default { value: __userResult, logs: __consoleLogs };
 export async function executeCode(
   code: string,
   backends: Map<string, Backend>,
-  opts?: { memoryLimit?: number; cpuTimeLimitMs?: number },
+  opts?: {
+    memoryLimit?: number;
+    cpuTimeLimitMs?: number;
+    skills?: Map<string, Skill>;
+  },
 ): Promise<Result<ExecuteResult, ExecuteError>> {
-  const registry = buildToolRegistry(backends);
-  const backendTools = buildBackendToolMap(backends);
+  const events: ExecutionEvent[] = [];
+  const skills = opts?.skills ?? new Map();
+  const registry = buildToolRegistry(backends, skills, events);
+  const backendTools = buildBackendToolMap(backends, skills);
+
+  events.push({ type: "execution_start", timestamp: Date.now() });
 
   const callTool: BindingFunction = async (name: unknown, args: unknown) => {
     const toolName = name as string;
@@ -120,16 +221,11 @@ export async function executeCode(
     if (!fn) {
       return { error: `Unknown tool: ${toolName}` };
     }
-    try {
-      return await fn(toolArgs);
-    } catch (e) {
-      return { error: (e as Error).message };
-    }
+    return fn(toolArgs);
   };
 
-  const wrappedCode = wrapCodeWithBindings(code, [...registry.keys()], backendTools);
+  const wrappedCode = wrapCodeWithBindings(code, backendTools);
 
-  // AST validation — catch syntax errors with better messages before V8 execution
   const syntaxError = validateSyntax(wrappedCode);
   if (syntaxError) {
     return err({
@@ -164,6 +260,8 @@ export async function executeCode(
   try {
     const runResult = await driver.run(wrappedCode, "/entry.mjs");
 
+    events.push({ type: "execution_end", timestamp: Date.now() });
+
     if (runResult.code !== 0) {
       return err({ kind: "runtime", code: runResult.code });
     }
@@ -176,8 +274,10 @@ export async function executeCode(
     return ok({
       value: result?.value ?? null,
       logs: result?.logs ?? [],
+      events,
     });
   } catch (e) {
+    events.push({ type: "execution_end", timestamp: Date.now() });
     return err({ kind: "exception", message: (e as Error).message });
   } finally {
     driver.dispose();

@@ -19,6 +19,14 @@ import {
 import { loadConfig } from "./config.js";
 import { executeCode } from "./executor.js";
 import { createOAuthRoutes } from "./oauth.js";
+import {
+  loadSkills,
+  registerSkill,
+  searchSkills,
+  recordExecution,
+  watchSkills,
+  generateSkillTypeDefs,
+} from "./skills.js";
 import { startStdioServer } from "./stdio.js";
 import { watchConfig } from "./watcher.js";
 
@@ -88,8 +96,17 @@ if (command !== "stdio") {
     console.warn("Warning: no backends connected (failOpen mode — server will start degraded)");
   }
 
+  // Load skills from .mcpx/skills/
+  const skillsDir = join(configPath.replace(/[^/]+$/, ""), ".mcpx", "skills");
+  const skills = loadSkills(skillsDir);
+  if (skills.size > 0) console.log(`  ${skills.size} skills loaded from ${skillsDir}`);
+  watchSkills(skillsDir, skills, () => {
+    console.log(`Skills reloaded (${skills.size} skills)`);
+  });
+
   // Pre-generate type definitions and tool listing (mutable for hot-reload + tool refresh)
   let typeDefs = generateTypeDefinitions(backends);
+  let skillTypeDefs = generateSkillTypeDefs(skills);
   let toolListing = generateToolListing(backends);
 
   let totalTools = Array.from(backends.values()).reduce((sum, b) => sum + b.tools.length, 0);
@@ -120,7 +137,7 @@ if (command !== "stdio") {
     );
   });
 
-  // Create the MCP server with 2 Code Mode tools
+  // Create the MCP server with Code Mode tools + skill management
   function createMcpServer(visibleBackends: Map<string, Backend>): McpServer {
     const server = new McpServer({
       name: "mcpx",
@@ -129,12 +146,14 @@ if (command !== "stdio") {
 
     server.tool(
       "search",
-      `Search available tools across all connected MCP servers. Returns type definitions for matched tools.
+      `Search available tools and skills. Returns type definitions for matched tools.
 
 Available tools:
 ${toolListing}`,
       {
-        query: z.string().describe("Search query — tool name, backend name, or keyword"),
+        query: z
+          .string()
+          .describe("Search query — tool name, backend name, skill name, or keyword"),
       },
       async ({ query }) => {
         const q = query.toLowerCase();
@@ -157,12 +176,20 @@ ${toolListing}`,
           }
         }
 
+        // Also search skills
+        const matchedSkills = searchSkills(skills, query);
+        for (const s of matchedSkills) {
+          matched.push(
+            `### skill.${s.name} [${s.trust}]\n${s.description}\nCode: ${s.code.slice(0, 200)}${s.code.length > 200 ? "..." : ""}`,
+          );
+        }
+
         if (matched.length === 0) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `No tools found matching "${query}". Available backends: ${Array.from(visibleBackends.keys()).join(", ")}`,
+                text: `No tools or skills found matching "${query}".`,
               },
             ],
           };
@@ -172,7 +199,7 @@ ${toolListing}`,
           content: [
             {
               type: "text" as const,
-              text: `Found ${matched.length} tools:\n\n${matched.join("\n\n")}`,
+              text: `Found ${matched.length} results:\n\n${matched.join("\n\n")}`,
             },
           ],
         };
@@ -185,6 +212,7 @@ ${toolListing}`,
 
 Write an async function body. Available tool functions (call with await):
 ${typeDefs}
+${skillTypeDefs}
 
 Example:
   const result = await grafana.searchDashboards({ query: "pods" });
@@ -193,14 +221,12 @@ Example:
         code: z.string().describe("JavaScript async function body to execute"),
       },
       async ({ code }) => {
-        const result = await executeCode(code, visibleBackends);
+        const result = await executeCode(code, visibleBackends, { skills });
 
         if (result.isErr()) {
           const e = result.error;
           let msg = e.kind === "runtime" ? `Execution failed with code ${e.code}` : e.message;
-          if (e.kind === "parse" && e.snippet) {
-            msg += `\n\n${e.snippet}`;
-          }
+          if (e.kind === "parse" && e.snippet) msg += `\n\n${e.snippet}`;
           return {
             content: [{ type: "text" as const, text: `Error: ${msg}` }],
             isError: true,
@@ -213,12 +239,44 @@ Example:
           result.value.logs.length > 0
             ? `\n\n--- Console Output ---\n${result.value.logs.map((l) => `[${l.level}] ${l.args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}`).join("\n")}`
             : "";
+        const eventText =
+          result.value.events.filter((e) => e.type === "tool_call" || e.type === "tool_error")
+            .length > 0
+            ? `\n\n--- Execution Events ---\n${result.value.events
+                .filter((e) => e.type !== "console")
+                .map(
+                  (e) =>
+                    `[${e.type}] ${e.tool ?? ""}${e.durationMs ? ` (${e.durationMs}ms)` : ""}${e.error ? ` ERROR: ${e.error}` : ""}`,
+                )
+                .join("\n")}`
+            : "";
 
+        return {
+          content: [{ type: "text" as const, text: text + logText + eventText }],
+        };
+      },
+    );
+
+    server.tool(
+      "register_skill",
+      "Save working code as a reusable skill. The skill becomes available to all agents connected to this gateway.",
+      {
+        name: z.string().describe("Skill name (alphanumeric + hyphens)"),
+        description: z.string().describe("What this skill does"),
+        code: z.string().describe("JavaScript async function body (same as execute code)"),
+      },
+      async ({ name, description, code: skillCode }) => {
+        const skill = registerSkill(skillsDir, skills, {
+          name,
+          description,
+          code: skillCode,
+        });
+        skillTypeDefs = generateSkillTypeDefs(skills);
         return {
           content: [
             {
               type: "text" as const,
-              text: text + logText,
+              text: `Skill "${skill.name}" registered (${skill.trust}). Available as skill.${skill.name}() in execute.`,
             },
           ],
         };

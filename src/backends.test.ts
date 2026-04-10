@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test";
+
 import {
   generateTypeDefinitions,
   generateToolListing,
@@ -49,7 +50,7 @@ describe("generateTypeDefinitions", () => {
   test("returns header comment for empty backends", () => {
     const backends = new Map<string, Backend>();
     const result = generateTypeDefinitions(backends);
-    expect(result).toContain("Available MCP tool functions");
+    expect(result).toContain("Available tool functions");
   });
 
   test("generates declare function for each tool", () => {
@@ -59,7 +60,9 @@ describe("generateTypeDefinitions", () => {
           name: "search_dashboards",
           description: "Search dashboards",
           inputSchema: {
-            properties: { query: { type: "string", description: "Search query" } },
+            properties: {
+              query: { type: "string", description: "Search query" },
+            },
             required: ["query"],
           },
         },
