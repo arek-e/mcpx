@@ -15,7 +15,7 @@ import {
   type Backend,
 } from "./backends.js";
 import { loadConfig } from "./config.js";
-import { executeCode } from "./executor.js";
+import { executeCode, type ExecutionEvent } from "./executor.js";
 
 export async function startStdioServer(configPath: string): Promise<void> {
   const config = loadConfig(configPath);
@@ -155,6 +155,7 @@ Example:
 
       const val = result.value.value;
       const text = typeof val === "string" ? val : JSON.stringify(val, null, 2);
+      const traceText = formatTrace(result.value.events);
       const logText =
         result.value.logs.length > 0
           ? `\n\n--- Console Output ---\n${result.value.logs.map((l) => `[${l.level}] ${l.args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}`).join("\n")}`
@@ -164,7 +165,7 @@ Example:
         content: [
           {
             type: "text" as const,
-            text: text + logText,
+            text: traceText + text + logText,
           },
         ],
       };
@@ -172,4 +173,33 @@ Example:
   );
 
   return server;
+}
+
+/** Render the tool-call events from executeCode into a readable trace header. */
+function formatTrace(events: ExecutionEvent[]): string {
+  const calls = events.filter((e) => e.type === "tool_call");
+  if (calls.length === 0) return "";
+
+  const lines = calls.map((e) => {
+    // e.tool is like "grafana_searchDashboards" — convert to "grafana.searchDashboards"
+    const tool = (e.tool ?? "unknown").replace(/_([a-zA-Z])/g, (_, c) => `.${c}`);
+    const argsStr = formatArgs(e.args);
+    const duration = e.durationMs != null ? ` (${e.durationMs}ms)` : "";
+    return `  ${tool}(${argsStr})${duration}`;
+  });
+
+  return `[tool calls]\n${lines.join("\n")}\n\n`;
+}
+
+/** Compact single-line summary of tool arguments — truncates long values. */
+function formatArgs(args: unknown, maxLen = 120): string {
+  if (args == null || (typeof args === "object" && Object.keys(args as object).length === 0)) {
+    return "";
+  }
+  try {
+    const s = JSON.stringify(args);
+    return s.length <= maxLen ? s : s.slice(0, maxLen) + "…";
+  } catch {
+    return String(args);
+  }
 }
