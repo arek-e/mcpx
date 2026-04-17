@@ -13,7 +13,7 @@ export function validateSyntax(code: string): AstError | null {
     acorn.parse(code, { sourceType: "module", ecmaVersion: "latest" });
     return null;
   } catch (e) {
-    const err = e as acorn.SyntaxError & {
+    const err = e as SyntaxError & {
       loc?: { line: number; column: number };
     };
     const line = err.loc?.line ?? 0;

@@ -249,5 +249,5 @@ export async function createOpenApiBackend(name: string, config: BackendConfig):
     connect: async () => {},
   };
 
-  return { name, client: client as Backend["client"], tools };
+  return { name, client: client as unknown as Backend["client"], tools };
 }

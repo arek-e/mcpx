@@ -61,7 +61,7 @@ if (command === "stdio") {
 if (command !== "stdio") {
   const configPath = process.argv[2] ?? "mcpx.json";
 
-  let config;
+  let config: ReturnType<typeof loadConfig>;
   try {
     config = loadConfig(configPath);
   } catch (err) {
