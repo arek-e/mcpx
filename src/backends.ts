@@ -76,16 +76,27 @@ async function connectHttp(
   return { name, client, tools: toolInfos };
 }
 
-/** Connect a single backend by name and config */
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
+
+/** Connect a single backend by name and config, with an optional timeout */
 async function connectOne(
   name: string,
   config: BackendConfig,
   tokensDir?: string,
+  timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
 ): Promise<Backend> {
-  if (config.transport === "stdio") return connectStdio(name, config);
-  if (config.transport === "http") return connectHttp(name, config, tokensDir);
-  if (config.transport === "openapi") return createOpenApiBackend(name, config);
-  throw new Error(`Unknown transport: ${config.transport}`);
+  const connect = () => {
+    if (config.transport === "stdio") return connectStdio(name, config);
+    if (config.transport === "http") return connectHttp(name, config, tokensDir);
+    if (config.transport === "openapi") return createOpenApiBackend(name, config);
+    throw new Error(`Unknown transport: ${config.transport}`);
+  };
+
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`connect timeout after ${timeoutMs}ms`)), timeoutMs),
+  );
+
+  return Promise.race([connect(), timeout]);
 }
 
 /** Connect to all configured backends in parallel */
