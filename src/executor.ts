@@ -178,6 +178,10 @@ const console = {
 
   const namespaces: string[] = [];
   for (const [backendName, tools] of backendTools) {
+    // sanitizeName turns e.g. "legora-design-system" → "legora_design_system" so it
+    // is a valid JS identifier; the callTool key still uses the original prefixed form
+    // that matches what buildToolRegistry registered.
+    const safeBackendName = sanitizeName(backendName);
     const methods = tools
       .map((toolName) => {
         const camelName = snakeToCamel(sanitizeName(toolName));
@@ -185,7 +189,7 @@ const console = {
         return `  ${camelName}: (args) => SecureExec.bindings.callTool("${prefixed}", args || {})`;
       })
       .join(",\n");
-    namespaces.push(`const ${backendName} = {\n${methods}\n};`);
+    namespaces.push(`const ${safeBackendName} = {\n${methods}\n};`);
   }
 
   return `

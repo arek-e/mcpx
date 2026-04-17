@@ -76,27 +76,37 @@ async function connectHttp(
   return { name, client, tools: toolInfos };
 }
 
-/** Connect to all configured backends */
+/** Connect a single backend by name and config */
+async function connectOne(
+  name: string,
+  config: BackendConfig,
+  tokensDir?: string,
+): Promise<Backend> {
+  if (config.transport === "stdio") return connectStdio(name, config);
+  if (config.transport === "http") return connectHttp(name, config, tokensDir);
+  if (config.transport === "openapi") return createOpenApiBackend(name, config);
+  throw new Error(`Unknown transport: ${config.transport}`);
+}
+
+/** Connect to all configured backends in parallel */
 export async function connectBackends(
   configs: Record<string, BackendConfig>,
   opts?: { tokensDir?: string },
 ): Promise<Map<string, Backend>> {
   const backends = new Map<string, Backend>();
+  const entries = Object.entries(configs);
 
-  for (const [name, config] of Object.entries(configs)) {
-    try {
-      if (config.transport === "stdio") {
-        const backend = await connectStdio(name, config);
-        backends.set(name, backend);
-      } else if (config.transport === "http") {
-        const backend = await connectHttp(name, config, opts?.tokensDir);
-        backends.set(name, backend);
-      } else if (config.transport === "openapi") {
-        const backend = await createOpenApiBackend(name, config);
-        backends.set(name, backend);
-      }
-    } catch (err) {
-      console.error(`  ${name}: failed to connect —`, (err as Error).message);
+  const results = await Promise.allSettled(
+    entries.map(([name, config]) => connectOne(name, config, opts?.tokensDir)),
+  );
+
+  for (let i = 0; i < entries.length; i++) {
+    const [name] = entries[i];
+    const result = results[i];
+    if (result.status === "fulfilled") {
+      backends.set(name, result.value);
+    } else {
+      console.error(`  ${name}: failed to connect —`, (result.reason as Error).message);
     }
   }
 
@@ -154,7 +164,8 @@ export function generateTypeDefinitions(backends: Map<string, Backend>): string 
   ];
 
   for (const [name, backend] of backends) {
-    lines.push(`// === ${name} ===`);
+    const safeName = sanitizeName(name);
+    lines.push(`// === ${safeName} ===`);
     for (const tool of backend.tools) {
       const props = tool.inputSchema?.properties as
         | Record<string, Record<string, unknown>>
@@ -163,7 +174,7 @@ export function generateTypeDefinitions(backends: Map<string, Backend>): string 
 
       if (props && Object.keys(props).length > 0) {
         // Generate interface
-        const ifaceName = `${name}_${sanitizeName(tool.name)}_Input`;
+        const ifaceName = `${safeName}_${sanitizeName(tool.name)}_Input`;
         lines.push(`interface ${ifaceName} {`);
         for (const [k, v] of Object.entries(props)) {
           const opt = required.includes(k) ? "" : "?";
@@ -174,12 +185,12 @@ export function generateTypeDefinitions(backends: Map<string, Backend>): string 
 
         const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : "";
         lines.push(
-          `declare function ${name}_${sanitizeName(tool.name)}(args: ${ifaceName}): Promise<any>;${desc}`,
+          `declare function ${safeName}_${sanitizeName(tool.name)}(args: ${ifaceName}): Promise<any>;${desc}`,
         );
       } else {
         const desc = tool.description ? ` — ${tool.description.slice(0, 80)}` : "";
         lines.push(
-          `declare function ${name}_${sanitizeName(tool.name)}(args?: {}): Promise<any>;${desc}`,
+          `declare function ${safeName}_${sanitizeName(tool.name)}(args?: {}): Promise<any>;${desc}`,
         );
       }
       lines.push("");
@@ -193,9 +204,10 @@ export function generateTypeDefinitions(backends: Map<string, Backend>): string 
 export function generateToolListing(backends: Map<string, Backend>): string {
   const lines: string[] = [];
   for (const [name, backend] of backends) {
+    const safeName = sanitizeName(name);
     for (const tool of backend.tools) {
       const desc = tool.description?.slice(0, 60) ?? "";
-      lines.push(`${name}_${sanitizeName(tool.name)}: ${desc}`);
+      lines.push(`${safeName}_${sanitizeName(tool.name)}: ${desc}`);
     }
   }
   return lines.join("\n");

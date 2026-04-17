@@ -145,6 +145,45 @@ describe("executeCode", () => {
     // Should either error or return undefined since tool doesn't exist
     expect(result.isOk() || result.isErr()).toBe(true);
   });
+
+  test("backend name with hyphens does not produce a JS syntax error", async () => {
+    const mockBackend: Backend = {
+      name: "legora-design-system",
+      client: {
+        callTool: async () => ({ content: [{ type: "text", text: "ok" }] }),
+        close: async () => {},
+      } as any,
+      tools: [{ name: "list_components", description: "List components", inputSchema: {} }],
+    };
+    const backends = new Map([["legora-design-system", mockBackend]]);
+
+    // The sandbox variable is legora_design_system (sanitized), not legora-design-system
+    const result = await executeCode(
+      "const r = await legora_design_system.listComponents({}); return r.content[0].text;",
+      backends,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) expect(result.value.value).toBe("ok");
+  });
+
+  test("backend name with multiple hyphens is fully sanitized", async () => {
+    const mockBackend: Backend = {
+      name: "hyperdx-clickhouse-staging",
+      client: {
+        callTool: async () => ({ content: [{ type: "text", text: "rows" }] }),
+        close: async () => {},
+      } as any,
+      tools: [{ name: "run_query", description: "Run a query", inputSchema: {} }],
+    };
+    const backends = new Map([["hyperdx-clickhouse-staging", mockBackend]]);
+
+    const result = await executeCode(
+      "const r = await hyperdx_clickhouse_staging.runQuery({}); return r.content[0].text;",
+      backends,
+    );
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) expect(result.value.value).toBe("rows");
+  });
 });
 
 describe("sanitizeName", () => {
